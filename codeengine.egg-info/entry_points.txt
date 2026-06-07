@@ -1,0 +1,2 @@
+[console_scripts]
+ce = codeengine.cli:main

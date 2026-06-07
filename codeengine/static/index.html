@@ -1,0 +1,1686 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Code Search Engine</title>
+  <meta name="description" content="Universal local code search, edit, and build engine for developers." />
+
+  <!-- Google Fonts -->
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+
+  <!-- highlight.js for syntax highlighting + line numbers -->
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css" />
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/highlightjs-line-numbers.js/2.8.0/highlightjs-line-numbers.min.js"></script>
+
+  <!-- CodeMirror 5 — syntax-highlighted code editors -->
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/codemirror.min.css" />
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/theme/dracula.min.css" />
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/codemirror.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/addon/mode/simple.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/mode/python/python.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/mode/javascript/javascript.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/mode/clike/clike.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/mode/go/go.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/mode/rust/rust.min.js"></script>
+
+  <style>
+    /* ═══════════════════ DESIGN TOKENS ═══════════════════ */
+    :root {
+      --bg-base:        #0d0f14;
+      --bg-surface:     #13161e;
+      --bg-elevated:    #1a1e2a;
+      --bg-hover:       #20253a;
+      --bg-active:      #252c45;
+
+      --border-subtle:  rgba(255,255,255,0.06);
+      --border-mid:     rgba(255,255,255,0.10);
+      --border-accent:  rgba(99,179,237,0.35);
+
+      --accent:         #63b3ed;
+      --accent-glow:    rgba(99,179,237,0.18);
+      --accent-bright:  #90cdf4;
+      --success:        #68d391;
+      --warning:        #f6ad55;
+      --danger:         #fc8181;
+      --purple:         #b794f4;
+
+      --text-primary:   #e2e8f0;
+      --text-secondary: #8892a4;
+      --text-muted:     #4a5568;
+      --text-code:      #a8d8a8;
+
+      --sidebar-w:      220px;
+      --topbar-h:       56px;
+      --radius-sm:      6px;
+      --radius-md:      10px;
+      --radius-lg:      14px;
+
+      --font-sans: 'Inter', system-ui, sans-serif;
+      --font-mono: 'JetBrains Mono', 'Fira Code', monospace;
+
+      --transition: 160ms cubic-bezier(0.4,0,0.2,1);
+    }
+
+    /* ═══════════════════ RESET ═══════════════════ */
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body { height: 100%; }
+    body {
+      font-family: var(--font-sans);
+      background: var(--bg-base);
+      color: var(--text-primary);
+      line-height: 1.5;
+      overflow: hidden;
+    }
+    button { cursor: pointer; font-family: inherit; }
+    input, select, textarea { font-family: inherit; }
+    ::-webkit-scrollbar { width: 6px; height: 6px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: var(--bg-elevated); border-radius: 99px; }
+
+    /* ═══════════════════ LAYOUT ═══════════════════ */
+    #app { display: flex; flex-direction: column; height: 100vh; }
+
+    /* ── TOP BAR ── */
+    #topbar {
+      height: var(--topbar-h);
+      background: var(--bg-surface);
+      border-bottom: 1px solid var(--border-subtle);
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 0 20px;
+      flex-shrink: 0;
+      -webkit-app-region: drag;
+    }
+    #topbar > * { -webkit-app-region: no-drag; }
+
+    .logo {
+      display: flex; align-items: center; gap: 10px;
+      font-weight: 700; font-size: 15px; letter-spacing: -0.01em;
+    }
+    .logo-icon {
+      width: 30px; height: 30px; border-radius: var(--radius-sm);
+      background: linear-gradient(135deg, #4299e1, #9f7aea);
+      display: flex; align-items: center; justify-content: center;
+      font-size: 15px; flex-shrink: 0;
+      box-shadow: 0 0 12px rgba(66,153,225,0.4);
+    }
+    .logo-text { color: var(--text-primary); }
+    .logo-text span { color: var(--accent); }
+
+    .topbar-spacer { flex: 1; }
+
+    /* Repo path bar */
+    #repo-bar {
+      display: flex; align-items: center; gap: 8px;
+      background: var(--bg-elevated);
+      border: 1px solid var(--border-mid);
+      border-radius: var(--radius-sm);
+      padding: 0 10px 0 4px;
+      height: 38px;
+      max-width: 550px;
+      flex: 1;
+    }
+    #repo-bar label {
+      font-size: 11px; font-weight: 600; color: var(--text-muted);
+      text-transform: uppercase; letter-spacing: 0.06em;
+      white-space: nowrap;
+      background: var(--bg-active);
+      padding: 4px 10px;
+      border-radius: 4px;
+    }
+    #repo-path {
+      flex: 1; background: transparent; border: none; outline: none;
+      color: var(--text-primary); font-size: 13.5px; font-family: var(--font-mono);
+      min-width: 0;
+    }
+    #repo-path::placeholder { color: var(--text-muted); }
+
+    #browse-btn {
+      height: 30px; padding: 0 12px;
+      background: var(--bg-active);
+      border: 1px solid var(--border-mid);
+      border-radius: 4px;
+      color: var(--text-secondary);
+      font-size: 12.5px; font-weight: 600;
+      display: flex; align-items: center; gap: 5px;
+      cursor: pointer; flex-shrink: 0;
+      transition: var(--transition);
+    }
+    #browse-btn:hover { background: var(--bg-hover); color: var(--accent); border-color: var(--border-accent); }
+
+    #status-dot {
+      width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0;
+      background: var(--success);
+      box-shadow: 0 0 6px var(--success);
+      transition: var(--transition);
+    }
+    #status-dot.indexing { background: var(--warning); box-shadow: 0 0 6px var(--warning); animation: pulse 1s infinite; }
+    #status-dot.error    { background: var(--danger);  box-shadow: 0 0 6px var(--danger); }
+
+    @keyframes pulse { 0%,100% { opacity:1; } 50% { opacity:0.4; } }
+
+    /* ── BODY (sidebar + main) ── */
+    #body { display: flex; flex: 1; overflow: hidden; }
+
+    /* ── SIDEBAR ── */
+    #sidebar {
+      width: var(--sidebar-w);
+      background: var(--bg-surface);
+      border-right: 1px solid var(--border-subtle);
+      display: flex; flex-direction: column;
+      padding: 12px 10px;
+      gap: 4px;
+      flex-shrink: 0;
+    }
+    .nav-section-label {
+      font-size: 10px; font-weight: 700; letter-spacing: 0.1em;
+      color: var(--text-muted); text-transform: uppercase;
+      padding: 10px 8px 4px;
+    }
+    .nav-item {
+      display: flex; align-items: center; gap: 10px;
+      padding: 8px 10px;
+      border-radius: var(--radius-sm);
+      border: 1px solid transparent;
+      cursor: pointer; user-select: none;
+      font-size: 13.5px; font-weight: 500;
+      color: var(--text-secondary);
+      transition: var(--transition);
+    }
+    .nav-item:hover { background: var(--bg-elevated); color: var(--text-primary); }
+    .nav-item.active {
+      background: var(--accent-glow);
+      border-color: var(--border-accent);
+      color: var(--accent-bright);
+    }
+    .nav-icon { font-size: 15px; width: 18px; text-align: center; }
+
+    .sidebar-spacer { flex: 1; }
+    .sidebar-version {
+      font-size: 11px; color: var(--text-muted);
+      text-align: center; padding: 8px;
+    }
+
+    /* ── MAIN PANEL ── */
+    #main {
+      flex: 1; display: flex; flex-direction: column;
+      overflow: hidden;
+    }
+
+    /* page sections */
+    .page { display: none; flex-direction: column; height: 100%; overflow: hidden; }
+    .page.active { display: flex; }
+
+    /* ── PAGE HEADER ── */
+    .page-header {
+      padding: 20px 24px 16px;
+      border-bottom: 1px solid var(--border-subtle);
+      flex-shrink: 0;
+    }
+    .page-title {
+      font-size: 18px; font-weight: 700; color: var(--text-primary);
+      margin-bottom: 14px;
+    }
+
+    /* ── SEARCH BAR ── */
+    .search-row {
+      display: flex; gap: 8px; align-items: center; flex-wrap: wrap;
+    }
+    .search-input-wrap {
+      flex: 1; min-width: 200px;
+      display: flex; align-items: center; gap: 8px;
+      background: var(--bg-elevated);
+      border: 1.5px solid var(--border-mid);
+      border-radius: var(--radius-md);
+      padding: 0 12px;
+      height: 40px;
+      transition: var(--transition);
+    }
+    .search-input-wrap:focus-within {
+      border-color: var(--accent);
+      box-shadow: 0 0 0 3px var(--accent-glow);
+    }
+    .search-icon { color: var(--text-muted); font-size: 14px; }
+    .search-input-wrap input {
+      flex: 1; background: transparent; border: none; outline: none;
+      color: var(--text-primary); font-size: 13.5px;
+    }
+    .search-input-wrap input::placeholder { color: var(--text-muted); }
+    .search-input-wrap.multiline {
+      height: auto;
+      min-height: 40px;
+      padding: 8px 12px;
+      align-items: flex-start;
+    }
+    .search-input-wrap textarea {
+      flex: 1; background: transparent; border: none; outline: none;
+      color: var(--text-primary); font-size: 13px; font-family: var(--font-mono);
+      resize: vertical;
+      min-height: 24px;
+      line-height: 1.5;
+    }
+    .search-input-wrap textarea::placeholder { color: var(--text-muted); font-family: var(--font-sans); }
+
+    .filter-select {
+      height: 40px; padding: 0 10px;
+      background: var(--bg-elevated);
+      border: 1.5px solid var(--border-mid);
+      border-radius: var(--radius-md);
+      color: var(--text-primary); font-size: 13px;
+      outline: none; cursor: pointer;
+      transition: var(--transition);
+    }
+    .filter-select:focus { border-color: var(--accent); }
+
+    .btn {
+      height: 40px; padding: 0 18px;
+      border-radius: var(--radius-md);
+      border: 1.5px solid transparent;
+      font-size: 13px; font-weight: 600;
+      display: inline-flex; align-items: center; gap: 6px;
+      transition: var(--transition);
+      white-space: nowrap;
+    }
+    .btn-primary {
+      background: linear-gradient(135deg, #4299e1, #667eea);
+      color: #fff;
+      box-shadow: 0 2px 12px rgba(66,153,225,0.3);
+    }
+    .btn-primary:hover { transform: translateY(-1px); box-shadow: 0 4px 18px rgba(66,153,225,0.45); }
+    .btn-primary:active { transform: translateY(0); }
+    .btn-secondary {
+      background: var(--bg-elevated);
+      border-color: var(--border-mid);
+      color: var(--text-primary);
+    }
+    .btn-secondary:hover { background: var(--bg-hover); border-color: var(--accent); color: var(--accent); }
+    .btn-danger {
+      background: rgba(252,129,129,0.12);
+      border-color: rgba(252,129,129,0.35);
+      color: var(--danger);
+    }
+    .btn-danger:hover { background: rgba(252,129,129,0.22); }
+    .btn-success {
+      background: rgba(104,211,145,0.12);
+      border-color: rgba(104,211,145,0.35);
+      color: var(--success);
+    }
+    .btn-success:hover { background: rgba(104,211,145,0.22); }
+    .btn:disabled { opacity: 0.45; cursor: not-allowed; transform: none !important; }
+
+    /* ── RESULTS AREA ── */
+    .results-area {
+      flex: 1; overflow-y: auto; padding: 16px 24px;
+    }
+
+    /* stats bar */
+    .stats-bar {
+      display: flex; align-items: center; gap: 12px;
+      font-size: 12px; color: var(--text-muted);
+      margin-bottom: 12px;
+    }
+    .stats-badge {
+      display: inline-flex; align-items: center; gap: 4px;
+      background: var(--bg-elevated);
+      border: 1px solid var(--border-subtle);
+      border-radius: 99px; padding: 2px 10px;
+      font-size: 11.5px; font-weight: 600; color: var(--accent);
+    }
+
+    /* match card */
+    .match-card {
+      background: var(--bg-surface);
+      border: 1px solid var(--border-subtle);
+      border-radius: var(--radius-md);
+      margin-bottom: 8px;
+      overflow: hidden;
+      transition: var(--transition);
+      cursor: pointer;
+    }
+    .match-card:hover { border-color: var(--border-mid); background: var(--bg-elevated); }
+    .match-card:hover .match-header { background: var(--bg-hover); }
+
+    .match-header {
+      display: flex; align-items: center; gap: 8px;
+      padding: 10px 14px;
+      background: var(--bg-elevated);
+      border-bottom: 1px solid var(--border-subtle);
+      transition: var(--transition);
+    }
+    .file-icon { font-size: 13px; }
+    .file-path {
+      flex: 1; font-family: var(--font-mono);
+      font-size: 12px; color: var(--accent-bright);
+      overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    }
+    .line-badge {
+      font-size: 11px; font-weight: 600;
+      background: var(--bg-active); color: var(--text-secondary);
+      border-radius: 4px; padding: 2px 8px;
+      font-family: var(--font-mono); flex-shrink: 0;
+    }
+
+    .match-body { padding: 10px 14px; }
+    .match-code {
+      font-family: var(--font-mono); font-size: 12.5px;
+      color: var(--text-code); white-space: pre-wrap; word-break: break-all;
+      line-height: 1.6;
+    }
+    .match-highlight { color: var(--warning); font-weight: 600; }
+
+    /* symbol card */
+    .symbol-card {
+      display: flex; align-items: center; gap: 12px;
+      padding: 11px 16px;
+      background: var(--bg-surface);
+      border: 1px solid var(--border-subtle);
+      border-radius: var(--radius-md);
+      margin-bottom: 6px;
+      cursor: pointer;
+      transition: var(--transition);
+    }
+    .symbol-card:hover { border-color: var(--border-mid); background: var(--bg-elevated); }
+    .symbol-kind {
+      font-size: 11px; font-weight: 700; letter-spacing: 0.05em;
+      padding: 3px 8px; border-radius: 4px; flex-shrink: 0;
+    }
+    .kind-function { background: rgba(66,153,225,0.18); color: #90cdf4; }
+    .kind-class    { background: rgba(159,122,234,0.18); color: #b794f4; }
+    .kind-method   { background: rgba(104,211,145,0.18); color: #68d391; }
+    .kind-interface{ background: rgba(246,173,85,0.18); color: #f6ad55; }
+    .kind-default  { background: rgba(255,255,255,0.08); color: var(--text-secondary); }
+
+    .symbol-name {
+      flex: 1; font-family: var(--font-mono); font-size: 13px;
+      color: var(--text-primary); font-weight: 500;
+    }
+    .symbol-file {
+      font-size: 11.5px; font-family: var(--font-mono); color: var(--text-muted);
+      overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+      max-width: 280px;
+    }
+    .symbol-lines { font-size: 11px; color: var(--text-muted); flex-shrink: 0; }
+
+    /* file list */
+    .file-item {
+      display: flex; align-items: center; gap: 10px;
+      padding: 9px 14px;
+      background: var(--bg-surface);
+      border: 1px solid var(--border-subtle);
+      border-radius: var(--radius-sm);
+      margin-bottom: 4px;
+      cursor: pointer;
+      transition: var(--transition);
+      font-family: var(--font-mono); font-size: 12.5px; color: var(--text-secondary);
+    }
+    .file-item:hover { background: var(--bg-elevated); border-color: var(--border-mid); color: var(--accent); }
+
+    /* ── CODE VIEWER PANEL ── */
+    #code-panel {
+      position: fixed; right: 0; top: var(--topbar-h);
+      width: 0; height: calc(100vh - var(--topbar-h));
+      background: #0e1117;
+      border-left: 1px solid var(--border-subtle);
+      transition: width 300ms cubic-bezier(0.4,0,0.2,1),
+                  box-shadow 300ms cubic-bezier(0.4,0,0.2,1);
+      overflow: hidden; z-index: 50;
+      display: flex; flex-direction: column;
+      box-shadow: none;
+    }
+    #code-panel.open {
+      width: 580px;
+      box-shadow: -8px 0 40px rgba(0,0,0,0.6);
+    }
+
+    /* Panel title bar */
+    #code-panel-header {
+      display: flex; align-items: center; gap: 0;
+      flex-shrink: 0;
+      flex-direction: column;
+      background: #0e1117;
+    }
+    #code-panel-titlebar {
+      display: flex; align-items: center; gap: 8px;
+      padding: 10px 14px;
+      width: 100%;
+      border-bottom: 1px solid rgba(255,255,255,0.06);
+    }
+    #code-panel-title {
+      flex: 1; font-family: var(--font-mono); font-size: 11.5px;
+      color: var(--accent-bright);
+      overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    }
+    #code-panel-close {
+      width: 24px; height: 24px; border-radius: 6px;
+      background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.08);
+      color: var(--text-muted); font-size: 12px;
+      display: flex; align-items: center; justify-content: center;
+      cursor: pointer; transition: var(--transition); flex-shrink: 0;
+    }
+    #code-panel-close:hover { color: var(--danger); background: rgba(252,129,129,0.12); border-color: rgba(252,129,129,0.35); }
+
+    /* Toolbar strip */
+    #code-panel-toolbar {
+      display: flex; align-items: center; gap: 8px;
+      padding: 7px 14px;
+      width: 100%;
+      background: #13161e;
+      border-bottom: 1px solid rgba(255,255,255,0.05);
+    }
+    #cp-lang-badge {
+      font-size: 10.5px; font-weight: 700; letter-spacing: 0.07em;
+      text-transform: uppercase;
+      padding: 2px 9px; border-radius: 4px;
+      background: rgba(99,179,237,0.14); color: var(--accent);
+      border: 1px solid rgba(99,179,237,0.25);
+      flex-shrink: 0;
+    }
+    #cp-line-count {
+      font-size: 11px; color: var(--text-muted);
+      font-family: var(--font-mono); flex: 1;
+    }
+    #cp-copy-btn {
+      height: 26px; padding: 0 10px;
+      background: rgba(255,255,255,0.05);
+      border: 1px solid rgba(255,255,255,0.08);
+      border-radius: 5px;
+      color: var(--text-secondary); font-size: 11.5px; font-weight: 600;
+      display: flex; align-items: center; gap: 4px;
+      cursor: pointer; transition: var(--transition); white-space: nowrap;
+    }
+    #cp-copy-btn:hover { background: rgba(99,179,237,0.12); color: var(--accent); border-color: rgba(99,179,237,0.3); }
+    #cp-copy-btn.copied { color: var(--success); border-color: rgba(104,211,145,0.3); background: rgba(104,211,145,0.1); }
+
+    /* Code body */
+    #code-panel-body {
+      flex: 1; overflow: auto;
+      background: #0e1117;
+    }
+    #code-panel-body::-webkit-scrollbar { width: 7px; height: 7px; }
+    #code-panel-body::-webkit-scrollbar-track { background: #0e1117; }
+    #code-panel-body::-webkit-scrollbar-thumb { background: #2a2f3e; border-radius: 99px; }
+    #code-panel-body::-webkit-scrollbar-thumb:hover { background: #363d52; }
+
+    /* Override hljs base to match our bg */
+    #code-panel-body .hljs { background: #0e1117 !important; padding: 0; }
+    #code-panel-body pre {
+      margin: 0;
+      font-family: var(--font-mono);
+      font-size: 12.5px;
+      line-height: 1.75;
+      tab-size: 4;
+    }
+
+    /* Line numbers plugin styling */
+    #code-panel-body .hljs-ln {
+      width: 100%;
+      border-collapse: collapse;
+    }
+    #code-panel-body .hljs-ln td { padding: 0; }
+    #code-panel-body .hljs-ln-numbers {
+      user-select: none;
+      text-align: right;
+      padding: 0 14px 0 20px !important;
+      color: #3d4459;
+      border-right: 1px solid #1e2333;
+      min-width: 42px;
+      font-size: 11.5px;
+      vertical-align: top;
+      position: sticky; left: 0;
+      background: #0e1117;
+    }
+    #code-panel-body .hljs-ln-code {
+      padding: 0 0 0 18px !important;
+      white-space: pre;
+    }
+    /* Highlight hovered line */
+    #code-panel-body .hljs-ln tr:hover .hljs-ln-numbers { color: #6b7a99; }
+    #code-panel-body .hljs-ln tr:hover .hljs-ln-code { background: rgba(255,255,255,0.028); }
+
+    /* ── EDIT PAGE ── */
+    .edit-grid {
+      display: grid; grid-template-columns: 1fr 1fr;
+      gap: 14px; flex: 1; overflow: hidden; padding: 14px 20px;
+    }
+    .edit-pane {
+      display: flex; flex-direction: column; gap: 0;
+      overflow: hidden;
+      border: 1.5px solid var(--border-mid);
+      border-radius: var(--radius-md);
+      background: #0e1117;
+      transition: border-color var(--transition);
+    }
+    .edit-pane:focus-within { border-color: var(--border-accent); }
+
+    /* Pane header toolbar */
+    .pane-toolbar {
+      display: flex; align-items: center; gap: 8px;
+      padding: 7px 12px;
+      background: #13161e;
+      border-bottom: 1px solid rgba(255,255,255,0.05);
+      flex-shrink: 0;
+      border-radius: var(--radius-md) var(--radius-md) 0 0;
+    }
+    .pane-label {
+      font-size: 10.5px; font-weight: 700; letter-spacing: 0.08em;
+      color: var(--text-muted); text-transform: uppercase; flex: 1;
+    }
+    .pane-lang-badge {
+      font-size: 10px; font-weight: 700; letter-spacing: 0.07em;
+      text-transform: uppercase;
+      padding: 2px 8px; border-radius: 4px;
+      background: rgba(99,179,237,0.12); color: var(--accent);
+      border: 1px solid rgba(99,179,237,0.22);
+      flex-shrink: 0;
+    }
+    .pane-copy-btn {
+      height: 22px; padding: 0 8px;
+      background: rgba(255,255,255,0.04);
+      border: 1px solid rgba(255,255,255,0.07);
+      border-radius: 4px;
+      color: var(--text-muted); font-size: 11px; font-weight: 600;
+      cursor: pointer; transition: var(--transition); white-space: nowrap;
+    }
+    .pane-copy-btn:hover { background: rgba(99,179,237,0.1); color: var(--accent); border-color: rgba(99,179,237,0.28); }
+    .pane-copy-btn.copied { color: var(--success); border-color: rgba(104,211,145,0.28); background: rgba(104,211,145,0.08); }
+
+    /* CodeMirror overrides — match panel dark aesthetic */
+    .edit-pane .CodeMirror {
+      flex: 1;
+      height: 100%;
+      background: #0e1117 !important;
+      font-family: var(--font-mono);
+      font-size: 12.5px;
+      line-height: 1.75;
+      border-radius: 0 0 var(--radius-md) var(--radius-md);
+    }
+    .edit-pane .CodeMirror-scroll { min-height: 100px; }
+    .edit-pane .CodeMirror-gutters {
+      background: #0e1117 !important;
+      border-right: 1px solid #1e2333 !important;
+    }
+    .edit-pane .CodeMirror-linenumber {
+      color: #3d4459;
+      padding: 0 10px 0 14px;
+      font-size: 11.5px;
+    }
+    .edit-pane .CodeMirror-cursor { border-left-color: var(--accent) !important; }
+    .edit-pane .CodeMirror-selected { background: rgba(99,179,237,0.15) !important; }
+    .edit-pane .CodeMirror-activeline-background { background: rgba(255,255,255,0.025) !important; }
+    /* Scrollbar */
+    .edit-pane .CodeMirror-vscrollbar::-webkit-scrollbar,
+    .edit-pane .CodeMirror-hscrollbar::-webkit-scrollbar { width: 7px; height: 7px; }
+    .edit-pane .CodeMirror-vscrollbar::-webkit-scrollbar-thumb,
+    .edit-pane .CodeMirror-hscrollbar::-webkit-scrollbar-thumb { background: #2a2f3e; border-radius: 99px; }
+
+    /* Keep hidden textarea accessible for CM */
+    .code-textarea { display: none; }
+
+    /* Diff view — upgraded */
+    .diff-view {
+      flex: 1; overflow: auto; font-family: var(--font-mono);
+      font-size: 12.5px; line-height: 1.75;
+      background: #0e1117;
+      border-radius: 0 0 var(--radius-md) var(--radius-md);
+      padding: 10px 0;
+    }
+    .diff-view .diff-line {
+      display: flex; gap: 0; white-space: pre;
+    }
+    .diff-view .diff-line .diff-gutter {
+      min-width: 38px;
+      text-align: right;
+      padding: 0 12px 0 18px;
+      color: #3d4459;
+      font-size: 11.5px;
+      border-right: 1px solid #1e2333;
+      user-select: none;
+      flex-shrink: 0;
+    }
+    .diff-view .diff-line .diff-text { padding: 0 0 0 16px; flex: 1; }
+    .diff-add  { background: rgba(104,211,145,0.08); color: #68d391; }
+    .diff-add .diff-gutter  { color: #2d6b45; background: rgba(104,211,145,0.05); border-color: rgba(104,211,145,0.15); }
+    .diff-del  { background: rgba(252,129,129,0.08); color: #fc8181; }
+    .diff-del .diff-gutter  { color: #7a3030; background: rgba(252,129,129,0.05); border-color: rgba(252,129,129,0.15); }
+    .diff-hdr  { color: var(--accent); opacity: 0.7; }
+    .diff-hdr .diff-gutter { color: transparent; }
+    .diff-ctx  { color: #4a5568; }
+    .diff-ctx .diff-gutter  { color: #2a2f3e; }
+
+    .edit-actions {
+      padding: 12px 20px;
+      border-top: 1px solid var(--border-subtle);
+      display: flex; gap: 10px; align-items: center; flex-shrink: 0;
+    }
+    #edit-status {
+      flex: 1; font-size: 12.5px; color: var(--text-muted);
+    }
+
+    /* ── BUILD PAGE ── */
+    .build-grid {
+      display: grid; grid-template-columns: repeat(3, 1fr);
+      gap: 14px; padding: 16px 24px;
+    }
+    .build-card {
+      background: var(--bg-surface);
+      border: 1px solid var(--border-subtle);
+      border-radius: var(--radius-lg); padding: 20px;
+      display: flex; flex-direction: column; gap: 12px;
+      transition: var(--transition);
+    }
+    .build-card:hover { border-color: var(--border-mid); background: var(--bg-elevated); }
+    .build-card-icon { font-size: 26px; }
+    .build-card-title { font-size: 14px; font-weight: 700; }
+    .build-card-desc { font-size: 12.5px; color: var(--text-muted); line-height: 1.6; }
+    .build-lang-select {
+      height: 36px; padding: 0 10px;
+      background: var(--bg-elevated); border: 1.5px solid var(--border-mid);
+      border-radius: var(--radius-sm); color: var(--text-primary);
+      font-size: 13px; outline: none;
+    }
+
+    .output-pane {
+      flex: 1; margin: 0 24px 16px;
+      background: #0a0c10; border: 1px solid var(--border-subtle);
+      border-radius: var(--radius-md); overflow: auto; padding: 14px;
+    }
+    #build-output {
+      font-family: var(--font-mono); font-size: 12px;
+      color: var(--text-secondary); line-height: 1.8;
+      white-space: pre-wrap; word-break: break-all;
+    }
+    .out-ok    { color: var(--success); }
+    .out-err   { color: var(--danger); }
+    .out-label { color: var(--accent); font-weight: 600; }
+
+    /* ── EMPTY / LOADING STATES ── */
+    .empty-state {
+      display: flex; flex-direction: column; align-items: center;
+      justify-content: center; gap: 14px; flex: 1;
+      color: var(--text-muted); text-align: center; padding: 40px;
+    }
+    .empty-icon { font-size: 44px; opacity: 0.4; }
+    .empty-title { font-size: 15px; font-weight: 600; color: var(--text-secondary); }
+    .empty-sub   { font-size: 13px; max-width: 320px; line-height: 1.6; }
+
+    .spinner {
+      width: 28px; height: 28px; border-radius: 50%;
+      border: 3px solid var(--bg-elevated);
+      border-top-color: var(--accent);
+      animation: spin 0.7s linear infinite;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    /* ── TOAST ── */
+    #toast-container {
+      position: fixed; bottom: 20px; right: 20px;
+      display: flex; flex-direction: column; gap: 8px; z-index: 200;
+    }
+    .toast {
+      padding: 12px 18px; border-radius: var(--radius-md);
+      font-size: 13px; font-weight: 500;
+      box-shadow: 0 4px 20px rgba(0,0,0,0.5);
+      animation: slideUp 0.22s ease;
+      max-width: 340px;
+    }
+    .toast.success { background: #1c3a26; border: 1px solid rgba(104,211,145,0.3); color: var(--success); }
+    .toast.error   { background: #3a1c1c; border: 1px solid rgba(252,129,129,0.3); color: var(--danger); }
+    .toast.info    { background: #1a2540; border: 1px solid rgba(99,179,237,0.3);  color: var(--accent); }
+    @keyframes slideUp { from { opacity:0; transform:translateY(12px); } to { opacity:1; transform:translateY(0); } }
+
+    /* misc */
+    .separator { height: 1px; background: var(--border-subtle); margin: 4px 0; }
+  </style>
+</head>
+<body>
+<div id="app">
+
+  <!-- ═══ TOP BAR ═══ -->
+  <header id="topbar">
+    <div class="logo">
+      <div class="logo-icon">⚡</div>
+      <div class="logo-text">Code<span>Engine</span></div>
+    </div>
+
+    <div class="topbar-spacer"></div>
+
+    <!-- Repo path -->
+    <div id="repo-bar">
+      <label>REPO</label>
+      <input id="repo-path" type="text" placeholder="C:\path\to\your\repo" value="." />
+      <button id="browse-btn" title="Pick folder">📁 Browse</button>
+      <div id="status-dot" title="Server ready"></div>
+    </div>
+  </header>
+
+  <!-- ═══ BODY ═══ -->
+  <div id="body">
+
+    <!-- ── Sidebar ── -->
+    <nav id="sidebar">
+      <div class="nav-section-label">Search</div>
+      <div class="nav-item active" data-page="code-search" id="nav-code-search">
+        <span class="nav-icon">🔍</span> Code Search
+      </div>
+      <div class="nav-item" data-page="symbol-search" id="nav-symbol-search">
+        <span class="nav-icon">🔣</span> Functions & Classes
+      </div>
+      <div class="nav-item" data-page="file-finder" id="nav-file-finder">
+        <span class="nav-icon">📂</span> File Finder
+      </div>
+
+      <div class="separator"></div>
+      <div class="nav-section-label">Edit</div>
+      <div class="nav-item" data-page="edit" id="nav-edit">
+        <span class="nav-icon">✏️</span> Code Edit
+      </div>
+
+      <div class="separator"></div>
+      <div class="nav-section-label">Tooling</div>
+      <div class="nav-item" data-page="build" id="nav-build">
+        <span class="nav-icon">🔨</span> Build / Test
+      </div>
+
+      <div class="sidebar-spacer"></div>
+      <div class="sidebar-version">v1.0.0 · Stage 1</div>
+    </nav>
+
+    <!-- ── Main panel ── -->
+    <main id="main">
+
+      <!-- ════ CODE SEARCH PAGE ════ -->
+      <section class="page active" id="page-code-search">
+        <div class="page-header">
+          <div class="page-title">🔍 Code Search</div>
+          <div class="search-row">
+            <div class="search-input-wrap multiline" style="flex:2">
+              <span class="search-icon" style="margin-top: 2px;">⌕</span>
+              <textarea id="cs-query" placeholder="Search pattern, regex, or text…" rows="1"></textarea>
+            </div>
+            <select id="cs-lang" class="filter-select" style="align-self: flex-start;">
+              <option value="">All Languages</option>
+              <option value="python">Python</option>
+              <option value="javascript">JavaScript</option>
+              <option value="typescript">TypeScript</option>
+              <option value="java">Java</option>
+              <option value="go">Go</option>
+              <option value="rust">Rust</option>
+            </select>
+            <input id="cs-limit" type="number" value="50" min="1" max="500"
+              style="width:70px; height:40px; padding:0 10px; background:var(--bg-elevated);
+                     border:1.5px solid var(--border-mid); border-radius:var(--radius-md);
+                     color:var(--text-primary); font-size:13px; outline:none; align-self: flex-start;" />
+            <button class="btn btn-primary" id="cs-search-btn" style="align-self: flex-start;">Search</button>
+          </div>
+        </div>
+        <div class="results-area" id="cs-results">
+          <div class="empty-state">
+            <div class="empty-icon">🔍</div>
+            <div class="empty-title">Search your codebase</div>
+            <div class="empty-sub">Enter a pattern above and hit Search. Uses ripgrep under the hood for blazing-fast results.</div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ════ FUNCTIONS & CLASSES PAGE ════ -->
+      <section class="page" id="page-symbol-search">
+        <div class="page-header">
+          <div class="page-title">🔣 Find Functions & Classes</div>
+          <div class="search-row">
+            <div class="search-input-wrap">
+              <span class="search-icon">⌕</span>
+              <input id="ss-name" type="text" placeholder="Function or class name — e.g. normalize_layout" />
+            </div>
+            <select id="ss-kind" class="filter-select">
+              <option value="">All Kinds</option>
+              <option value="function">Function</option>
+              <option value="class">Class</option>
+              <option value="method">Method</option>
+              <option value="interface">Interface</option>
+            </select>
+            <button class="btn btn-primary" id="ss-search-btn">Search</button>
+          </div>
+        </div>
+        <div class="results-area" id="ss-results">
+          <div class="empty-state">
+            <div class="empty-icon">🔣</div>
+            <div class="empty-title">Find functions and classes</div>
+            <div class="empty-sub">Search by name to locate exact function, class, or method definitions indexed across your repo.</div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ════ FILE FINDER PAGE ════ -->
+      <section class="page" id="page-file-finder">
+        <div class="page-header">
+          <div class="page-title">📂 File Finder</div>
+          <div class="search-row">
+            <div class="search-input-wrap">
+              <span class="search-icon">⌕</span>
+              <input id="ff-pattern" type="text" placeholder="Filename pattern (e.g. app, *.py, test_*)…" />
+            </div>
+            <button class="btn btn-primary" id="ff-search-btn">Find</button>
+          </div>
+        </div>
+        <div class="results-area" id="ff-results">
+          <div class="empty-state">
+            <div class="empty-icon">📂</div>
+            <div class="empty-title">Find files</div>
+            <div class="empty-sub">Search by filename pattern. Uses fd for fast fuzzy file discovery.</div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ════ EDIT PAGE ════ -->
+      <section class="page" id="page-edit">
+        <div class="page-header">
+          <div class="page-title">✏️ Code Edit</div>
+          <div class="search-row">
+            <div class="search-input-wrap" style="flex:2">
+              <span class="search-icon">📄</span>
+              <input id="edit-file" type="text" placeholder="Relative file path (e.g. codeengine/app.py)" />
+            </div>
+          </div>
+        </div>
+        <div class="edit-grid">
+          <!-- Old code pane -->
+          <div class="edit-pane" id="pane-old">
+            <div class="pane-toolbar">
+              <span class="pane-label">Old Code (to replace)</span>
+              <span class="pane-lang-badge" id="old-lang-badge">Plain</span>
+              <button class="pane-copy-btn" id="old-copy-btn">⎘ Copy</button>
+            </div>
+            <textarea class="code-textarea" id="edit-old" placeholder="Paste the exact existing code block you want to replace…"></textarea>
+          </div>
+          <!-- New code pane -->
+          <div class="edit-pane" id="pane-new">
+            <div class="pane-toolbar">
+              <span class="pane-label">New Code (replacement)</span>
+              <span class="pane-lang-badge" id="new-lang-badge">Plain</span>
+              <button class="pane-copy-btn" id="new-copy-btn">⎘ Copy</button>
+            </div>
+            <textarea class="code-textarea" id="edit-new" placeholder="Paste your new replacement code…"></textarea>
+          </div>
+          <!-- Diff pane -->
+          <div class="edit-pane" style="grid-column:1/-1">
+            <div class="pane-toolbar">
+              <span class="pane-label">Unified Diff Preview</span>
+              <span class="pane-lang-badge" style="background:rgba(246,173,85,0.12);color:var(--warning);border-color:rgba(246,173,85,0.25);">DIFF</span>
+              <button class="pane-copy-btn" id="diff-copy-btn">⎘ Copy Diff</button>
+            </div>
+            <div class="diff-view" id="edit-diff">
+              <div class="diff-line diff-ctx"><span class="diff-gutter"></span><span class="diff-text" style="color:var(--text-muted);font-style:italic">Click "Preview" to see the diff before applying.</span></div>
+            </div>
+          </div>
+        </div>
+        <div class="edit-actions">
+          <span id="edit-status">Ready</span>
+          <button class="btn btn-secondary" id="edit-preview-btn">👁 Preview</button>
+          <button class="btn btn-success" id="edit-apply-btn" disabled>✅ Apply Edit</button>
+          <button class="btn btn-danger" id="edit-undo-btn">↩ Undo Last</button>
+        </div>
+      </section>
+
+      <!-- ════ BUILD PAGE ════ -->
+      <section class="page" id="page-build">
+        <div class="page-header">
+          <div class="page-title">🔨 Build / Test / Lint</div>
+        </div>
+
+        <!-- Action cards -->
+        <div class="build-grid">
+          <div class="build-card">
+            <div class="build-card-icon">🏗</div>
+            <div class="build-card-title">Build</div>
+            <div class="build-card-desc">Compile or build the project inside a worker container.</div>
+            <select class="build-lang-select" id="build-lang-build">
+              <option value="python">Python</option>
+              <option value="javascript">JavaScript</option>
+              <option value="java">Java</option>
+              <option value="go">Go</option>
+              <option value="rust">Rust</option>
+            </select>
+            <button class="btn btn-primary" id="build-run-btn">Run Build</button>
+          </div>
+          <div class="build-card">
+            <div class="build-card-icon">🧪</div>
+            <div class="build-card-title">Test</div>
+            <div class="build-card-desc">Execute the full test suite inside the container.</div>
+            <select class="build-lang-select" id="build-lang-test">
+              <option value="python">Python</option>
+              <option value="javascript">JavaScript</option>
+              <option value="java">Java</option>
+              <option value="go">Go</option>
+              <option value="rust">Rust</option>
+            </select>
+            <button class="btn btn-primary" id="test-run-btn">Run Tests</button>
+          </div>
+          <div class="build-card">
+            <div class="build-card-icon">🔎</div>
+            <div class="build-card-title">Lint</div>
+            <div class="build-card-desc">Run the linter to check code quality and style.</div>
+            <select class="build-lang-select" id="build-lang-lint">
+              <option value="python">Python</option>
+              <option value="javascript">JavaScript</option>
+              <option value="java">Java</option>
+              <option value="go">Go</option>
+              <option value="rust">Rust</option>
+            </select>
+            <button class="btn btn-primary" id="lint-run-btn">Run Lint</button>
+          </div>
+        </div>
+
+        <div class="output-pane">
+          <div id="build-output"><span style="color:var(--text-muted)">Output will appear here…</span></div>
+        </div>
+      </section>
+
+    </main><!-- /main -->
+  </div><!-- /body -->
+</div><!-- /app -->
+
+<!-- Slide-out code viewer -->
+<div id="code-panel">
+  <div id="code-panel-header">
+    <div id="code-panel-titlebar">
+      <span style="font-size:13px; flex-shrink:0;">📄</span>
+      <div id="code-panel-title">—</div>
+      <div id="code-panel-close" title="Close panel">✕</div>
+    </div>
+    <div id="code-panel-toolbar">
+      <span id="cp-lang-badge">—</span>
+      <span id="cp-line-count"></span>
+      <button id="cp-copy-btn" title="Copy source to clipboard">⎘ Copy</button>
+    </div>
+  </div>
+  <div id="code-panel-body">
+    <pre><code id="code-panel-content" class="language-plaintext"></code></pre>
+  </div>
+</div>
+
+<!-- Toast notifications -->
+<div id="toast-container"></div>
+
+<script>
+/* ═══════════════════════════════════════════════════════════
+   UTILITIES
+═══════════════════════════════════════════════════════════ */
+const BASE = 'http://127.0.0.1:8000';
+
+async function api(path, opts = {}) {
+  const r = await fetch(BASE + path, {
+    headers: { 'Content-Type': 'application/json' },
+    ...opts,
+  });
+  if (!r.ok) {
+    const err = await r.json().catch(() => ({ detail: r.statusText }));
+    throw new Error(err.detail || r.statusText);
+  }
+  return r.json();
+}
+
+function toast(msg, type = 'info') {
+  const el = document.createElement('div');
+  el.className = `toast ${type}`;
+  el.textContent = msg;
+  document.getElementById('toast-container').appendChild(el);
+  setTimeout(() => el.remove(), 3200);
+}
+
+function loading(container) {
+  container.innerHTML = `<div class="empty-state"><div class="spinner"></div><div class="empty-sub">Loading…</div></div>`;
+}
+
+function empty(container, icon, title, sub) {
+  container.innerHTML = `<div class="empty-state">
+    <div class="empty-icon">${icon}</div>
+    <div class="empty-title">${title}</div>
+    <div class="empty-sub">${sub}</div>
+  </div>`;
+}
+
+function escHtml(s) {
+  return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+
+function getRepo() {
+  return document.getElementById('repo-path').value.trim() || '.';
+}
+
+/* ═══════════════════════════════════════════════════════════
+   NAV / PAGE ROUTING
+═══════════════════════════════════════════════════════════ */
+function navigateToPage(pageName) {
+  document.querySelectorAll('.nav-item').forEach(i => i.classList.remove('active'));
+  document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
+  
+  const navItem = document.querySelector(`.nav-item[data-page="${pageName}"]`);
+  if (navItem) navItem.classList.add('active');
+  
+  const pageId = 'page-' + pageName;
+  document.getElementById(pageId)?.classList.add('active');
+  closeCodePanel();
+}
+
+document.querySelectorAll('.nav-item').forEach(item => {
+  item.addEventListener('click', () => {
+    navigateToPage(item.dataset.page);
+  });
+});
+
+/* ═══════════════════════════════════════════════════════════
+   CODE PANEL (slide-in)
+═══════════════════════════════════════════════════════════ */
+const codePanel = document.getElementById('code-panel');
+let _currentPanelSource = '';
+
+const LANG_LABELS = {
+  python:'Python', javascript:'JavaScript', typescript:'TypeScript',
+  java:'Java', go:'Go', rust:'Rust',
+  html:'HTML', css:'CSS', json:'JSON', markdown:'Markdown', plaintext:'Plain Text'
+};
+
+function openCodePanel(title, source, lang = 'plaintext') {
+  _currentPanelSource = source;
+
+  // Title
+  document.getElementById('code-panel-title').textContent = title;
+
+  // Toolbar — language badge
+  const badge = document.getElementById('cp-lang-badge');
+  badge.textContent = LANG_LABELS[lang] || lang;
+
+  // Toolbar — line count
+  const lineCount = (source.match(/\n/g) || []).length + 1;
+  document.getElementById('cp-line-count').textContent = `${lineCount} line${lineCount !== 1 ? 's' : ''}`;
+
+  // Highlight
+  const el = document.getElementById('code-panel-content');
+  el.className = `language-${lang}`;
+  el.textContent = source;
+  hljs.highlightElement(el);
+
+  // Line numbers (plugin)
+  if (typeof hljs.lineNumbersBlock === 'function') {
+    hljs.lineNumbersBlock(el);
+  }
+
+  // Open panel
+  codePanel.classList.add('open');
+}
+
+function closeCodePanel() {
+  codePanel.classList.remove('open');
+}
+
+document.getElementById('code-panel-close').addEventListener('click', closeCodePanel);
+
+// Copy button
+document.getElementById('cp-copy-btn').addEventListener('click', () => {
+  if (!_currentPanelSource) return;
+  navigator.clipboard.writeText(_currentPanelSource).then(() => {
+    const btn = document.getElementById('cp-copy-btn');
+    btn.textContent = '✓ Copied';
+    btn.classList.add('copied');
+    setTimeout(() => { btn.textContent = '⎘ Copy'; btn.classList.remove('copied'); }, 1800);
+  }).catch(() => toast('Copy failed', 'error'));
+});
+
+function detectLang(filePath) {
+  const ext = (filePath || '').split('.').pop().toLowerCase();
+  const map = { py:'python', js:'javascript', ts:'typescript',
+                java:'java', go:'go', rs:'rust',
+                html:'html', css:'css', json:'json', md:'markdown' };
+  return map[ext] || 'plaintext';
+}
+
+/* ═══════════════════════════════════════════════════════════
+   CODE SEARCH
+═══════════════════════════════════════════════════════════ */
+const csResults = document.getElementById('cs-results');
+
+document.getElementById('cs-search-btn').addEventListener('click', runCodeSearch);
+document.getElementById('cs-query').addEventListener('keydown', e => {
+  if (e.key === 'Enter' && !e.shiftKey) {
+    e.preventDefault();
+    runCodeSearch();
+  }
+});
+
+async function runCodeSearch() {
+  let q = document.getElementById('cs-query').value;
+  // Trim only leading newlines and trailing whitespace to preserve indentation on the first line
+  q = q.replace(/^[\r\n]+/, '').replace(/[\s\r\n]+$/, '');
+  const lang  = document.getElementById('cs-lang').value;
+  const limit = document.getElementById('cs-limit').value || 50;
+  if (!q) { toast('Enter a search query', 'error'); return; }
+
+  loading(csResults);
+  try {
+    const params = new URLSearchParams({ q, path: getRepo(), limit });
+    if (lang) params.append('lang', lang);
+    const data = await api(`/search/code?${params}`);
+
+    if (!data.matches.length) {
+      empty(csResults, '🔍', 'No matches found', `No results for "${escHtml(q)}" in this repo.`);
+      return;
+    }
+
+    let html = `<div class="stats-bar"><span class="stats-badge">⚡ ${data.total} match${data.total!==1?'es':''}</span> for <code style="white-space: pre-wrap; font-family: var(--font-mono); background: var(--bg-elevated); padding: 2px 6px; border-radius: 4px;">"${escHtml(q)}"</code></div>`;
+    data.matches.forEach(m => {
+      const normalizedText = m.text.replace(/\r\n/g, '\n');
+      const normalizedQ = q.replace(/\r\n/g, '\n');
+      const highlighted = escHtml(normalizedText).replace(
+        new RegExp(escHtml(normalizedQ).replace(/[.*+?^${}()|[\]\\]/g,'\\$&'), 'gi'),
+        s => `<span class="match-highlight">${s}</span>`
+      );
+      html += `
+        <div class="match-card" onclick="loadFunctionContext('${escHtml(m.file)}',${m.line})">
+          <div class="match-header">
+            <span class="file-icon">📄</span>
+            <span class="file-path">${escHtml(m.file)}</span>
+            <span class="line-badge">L${m.line}:${m.col}</span>
+          </div>
+          <div class="match-body">
+            <div class="match-code">${highlighted}</div>
+          </div>
+        </div>`;
+    });
+    csResults.innerHTML = html;
+  } catch(e) {
+    empty(csResults, '⚠️', 'Search failed', e.message);
+    toast('Search error: ' + e.message, 'error');
+  }
+}
+
+async function loadFunctionContext(file, line) {
+  try {
+    const source = await fetchFileSnippet(file);
+    openCodePanel(file, source, detectLang(file));
+  } catch(e) {
+    toast('Cannot preview: ' + e.message, 'error');
+  }
+}
+
+async function fetchFileSnippet(file) {
+  const data = await api(`/search/file-read?${new URLSearchParams({ file })}`);
+  return data.content;
+}
+
+/* ═══════════════════════════════════════════════════════════
+   SYMBOL SEARCH
+═══════════════════════════════════════════════════════════ */
+const ssResults = document.getElementById('ss-results');
+
+document.getElementById('ss-search-btn').addEventListener('click', runSymbolSearch);
+document.getElementById('ss-name').addEventListener('keydown', e => { if(e.key==='Enter') runSymbolSearch(); });
+
+async function runSymbolSearch() {
+  let name = document.getElementById('ss-name').value.trim();
+  const kind = document.getElementById('ss-kind').value;
+  if (!name) { toast('Enter a symbol name', 'error'); return; }
+
+  // Strip: "def normalize_layout(items):" → "normalize_layout"
+  name = name
+    .replace(/^(async\s+def|def|class)\s+/, '')
+    .replace(/\s*\(.*/, '')
+    .replace(/:$/, '')
+    .trim();
+
+  loading(ssResults);
+  try {
+    const params = new URLSearchParams({ name });
+    if (kind) params.append('kind', kind);
+    const data = await api(`/search/symbol?${params}`);
+
+    if (!data.length) {
+      // Fallback: search using code search API
+      const fallbackQuery = (kind === 'class') ? `class ${name}` : `def ${name}`;
+      const codeParams = new URLSearchParams({ q: fallbackQuery, path: getRepo(), limit: 50 });
+      const fallbackData = await api(`/search/code?${codeParams}`);
+      
+      if (!fallbackData.matches || !fallbackData.matches.length) {
+        empty(ssResults, '🔣', 'No symbols found', `No symbols or code matches matching "${escHtml(name)}".`);
+        return;
+      }
+
+      let html = `
+        <div class="stats-bar" style="margin-bottom: 16px;">
+          <span class="stats-badge" style="background: rgba(246,173,85,0.18); color: var(--warning); border-color: rgba(246,173,85,0.35);">⚠️ Fallback</span>
+          <span>Symbols not yet indexed — showing code matches for <b>"${escHtml(fallbackQuery)}"</b></span>
+        </div>`;
+      fallbackData.matches.forEach(m => {
+        html += `
+          <div class="match-card" onclick="loadFunctionContext('${escHtml(m.file)}',${m.line})">
+            <div class="match-header">
+              <span class="file-icon">📄</span>
+              <span class="file-path">${escHtml(m.file)}</span>
+              <span class="line-badge">L${m.line}:${m.col}</span>
+            </div>
+            <div class="match-body">
+              <div class="match-code">${escHtml(m.text)}</div>
+            </div>
+          </div>`;
+      });
+      ssResults.innerHTML = html;
+      return;
+    }
+
+    let html = `<div class="stats-bar"><span class="stats-badge">🔣 ${data.length} symbol${data.length!==1?'s':''}</span></div>`;
+    data.forEach(s => {
+      const kindClass = { function:'kind-function', class:'kind-class', method:'kind-method', interface:'kind-interface' }[s.kind] || 'kind-default';
+      html += `
+        <div class="symbol-card" onclick="loadSymbolSource('${escHtml(s.file)}','${escHtml(s.name)}','${escHtml(s.kind)}')">
+          <span class="symbol-kind ${kindClass}">${s.kind}</span>
+          <span class="symbol-name">${escHtml(s.name)}</span>
+          <span class="symbol-file">${escHtml(s.file)}</span>
+          <span class="symbol-lines">L${s.line_start}–${s.line_end}</span>
+        </div>`;
+    });
+    ssResults.innerHTML = html;
+  } catch(e) {
+    empty(ssResults, '⚠️', 'Search failed', e.message);
+    toast('Error: ' + e.message, 'error');
+  }
+}
+
+async function loadSymbolSource(file, name, kind) {
+  try {
+    let data;
+    if (kind === 'class') {
+      data = await api(`/search/class?${new URLSearchParams({file,name})}`);
+    } else {
+      data = await api(`/search/function?${new URLSearchParams({file,name})}`);
+    }
+    
+    // Autofill Code Editor fields
+    const filePath = data.file || file;
+    document.getElementById('edit-file').value = filePath;
+    const ext = filePath.split('.').pop().toLowerCase();
+    setEditorLang(ext);
+    cmOld.setValue(data.source);
+    cmNew.setValue(data.source);
+
+    // Switch to Code Editor page
+    navigateToPage('edit');
+    // Refresh CM layout after becoming visible
+    setTimeout(() => { cmOld.refresh(); cmNew.refresh(); }, 50);
+
+    toast(`Loaded ${name} into Code Editor`, 'success');
+  } catch(e) {
+    toast('Cannot load source: ' + e.message, 'error');
+  }
+}
+
+/* ═══════════════════════════════════════════════════════════
+   FILE FINDER
+═══════════════════════════════════════════════════════════ */
+const ffResults = document.getElementById('ff-results');
+
+document.getElementById('ff-search-btn').addEventListener('click', runFileFinder);
+document.getElementById('ff-pattern').addEventListener('keydown', e => { if(e.key==='Enter') runFileFinder(); });
+
+async function runFileFinder() {
+  const pattern = document.getElementById('ff-pattern').value.trim();
+  loading(ffResults);
+  try {
+    const params = new URLSearchParams({ pattern, root: getRepo() });
+    const data   = await api(`/search/file?${params}`);
+
+    if (!data.length) {
+      empty(ffResults, '📂', 'No files found', `No files matching "${escHtml(pattern)}".`);
+      return;
+    }
+
+    const ICONS = { py:'🐍', js:'🟨', ts:'🔷', java:'☕', go:'🐹', rs:'🦀', html:'🌐', css:'🎨', json:'📋', md:'📝' };
+    let html = `<div class="stats-bar"><span class="stats-badge">📂 ${data.length} file${data.length!==1?'s':''}</span></div>`;
+    data.forEach(f => {
+      const ext  = f.split('.').pop().toLowerCase();
+      const icon = ICONS[ext] || '📄';
+      html += `<div class="file-item" onclick="loadFunctionContext('${escHtml(f)}', 1)">${icon} ${escHtml(f)}</div>`;
+    });
+    ffResults.innerHTML = html;
+  } catch(e) {
+    empty(ffResults, '⚠️', 'Search failed', e.message);
+    toast('Error: ' + e.message, 'error');
+  }
+}
+
+function copyToClipboard(text) {
+  navigator.clipboard.writeText(text).then(() => toast('Copied: ' + text, 'info'));
+}
+
+/* ═══════════════════════════════════════════════════════════
+   EDIT — CodeMirror editors
+═══════════════════════════════════════════════════════════ */
+let currentEditId = null;
+let _lastDiffText = '';
+
+const editStatus  = document.getElementById('edit-status');
+const editApplyBtn = document.getElementById('edit-apply-btn');
+const editDiff    = document.getElementById('edit-diff');
+
+/* ── CM mode map ── */
+const EXT_TO_CM_MODE = {
+  py: 'python', js: 'javascript', ts: { name: 'javascript', typescript: true },
+  java: 'text/x-java', go: 'go', rs: 'rust',
+  html: 'htmlmixed', css: 'css', json: 'application/json'
+};
+const EXT_TO_LABEL = {
+  py:'Python', js:'JavaScript', ts:'TypeScript',
+  java:'Java', go:'Go', rs:'Rust',
+  html:'HTML', css:'CSS', json:'JSON'
+};
+
+const CM_OPTS = {
+  theme: 'dracula',
+  lineNumbers: true,
+  indentUnit: 4,
+  tabSize: 4,
+  indentWithTabs: false,
+  lineWrapping: false,
+  autofocus: false,
+  extraKeys: { Tab: cm => cm.execCommand('insertSoftTab') },
+  styleActiveLine: true,
+};
+
+/* Initialise both editors */
+const cmOld = CodeMirror.fromTextArea(document.getElementById('edit-old'), { ...CM_OPTS, mode: 'plaintext' });
+const cmNew = CodeMirror.fromTextArea(document.getElementById('edit-new'), { ...CM_OPTS, mode: 'plaintext' });
+
+/* Make editors fill pane height */
+cmOld.setSize('100%', '100%');
+cmNew.setSize('100%', '100%');
+
+function setEditorLang(ext) {
+  const mode  = EXT_TO_CM_MODE[ext] || 'plaintext';
+  const label = EXT_TO_LABEL[ext]   || 'Plain';
+  cmOld.setOption('mode', mode);
+  cmNew.setOption('mode', mode);
+  document.getElementById('old-lang-badge').textContent = label;
+  document.getElementById('new-lang-badge').textContent = label;
+}
+
+/* Watch file path input → update editor language */
+document.getElementById('edit-file').addEventListener('input', () => {
+  const file = document.getElementById('edit-file').value.trim();
+  const ext  = file.split('.').pop().toLowerCase();
+  setEditorLang(ext);
+});
+
+/* ── Copy buttons ── */
+function makeCopyBtn(btnId, getContent) {
+  document.getElementById(btnId).addEventListener('click', () => {
+    const text = getContent();
+    if (!text) return;
+    navigator.clipboard.writeText(text).then(() => {
+      const btn = document.getElementById(btnId);
+      btn.textContent = '✓ Copied';
+      btn.classList.add('copied');
+      setTimeout(() => { btn.textContent = '⎘ Copy'; btn.classList.remove('copied'); }, 1800);
+    }).catch(() => toast('Copy failed', 'error'));
+  });
+}
+makeCopyBtn('old-copy-btn', () => cmOld.getValue());
+makeCopyBtn('new-copy-btn', () => cmNew.getValue());
+makeCopyBtn('diff-copy-btn', () => _lastDiffText);
+
+/* ── Preview ── */
+document.getElementById('edit-preview-btn').addEventListener('click', async () => {
+  const file     = document.getElementById('edit-file').value.trim();
+  const old_code = cmOld.getValue();
+  const new_code = cmNew.getValue();
+  if (!file || !old_code || !new_code) { toast('Fill in all three fields', 'error'); return; }
+
+  editStatus.textContent = 'Generating preview…';
+  editApplyBtn.disabled = true;
+  currentEditId = null;
+
+  try {
+    const data = await api('/preview-edit', {
+      method: 'POST',
+      body: JSON.stringify({ file, old_code, new_code }),
+    });
+    currentEditId  = data.edit_id;
+    _lastDiffText  = data.diff || '';
+
+    // Render coloured diff with gutter line numbers
+    const lines = _lastDiffText.split('\n');
+    let addN = 0, delN = 0, ctxN = 0;
+    editDiff.innerHTML = lines.map((l, i) => {
+      const lineNum = i + 1;
+      if (l.startsWith('+++') || l.startsWith('---') || l.startsWith('@@')) {
+        return `<div class="diff-line diff-hdr"><span class="diff-gutter">${lineNum}</span><span class="diff-text">${escHtml(l)}</span></div>`;
+      }
+      if (l.startsWith('+')) {
+        return `<div class="diff-line diff-add"><span class="diff-gutter">+${lineNum}</span><span class="diff-text">${escHtml(l.slice(1))}</span></div>`;
+      }
+      if (l.startsWith('-')) {
+        return `<div class="diff-line diff-del"><span class="diff-gutter">-${lineNum}</span><span class="diff-text">${escHtml(l.slice(1))}</span></div>`;
+      }
+      return `<div class="diff-line diff-ctx"><span class="diff-gutter">${lineNum}</span><span class="diff-text">${escHtml(l)}</span></div>`;
+    }).join('');
+
+    editStatus.textContent = `edit_id: ${currentEditId} — ready to apply`;
+    editApplyBtn.disabled = false;
+    toast('Preview ready', 'success');
+  } catch(e) {
+    editDiff.innerHTML = `<div class="diff-line diff-del"><span class="diff-gutter">!</span><span class="diff-text">${escHtml(e.message)}</span></div>`;
+    editStatus.textContent = 'Preview failed';
+    toast('Preview error: ' + e.message, 'error');
+  }
+});
+
+/* ── Apply ── */
+editApplyBtn.addEventListener('click', async () => {
+  if (!currentEditId) return;
+  editStatus.textContent = 'Applying edit…';
+  editApplyBtn.disabled = true;
+  try {
+    const data = await api('/apply-edit', {
+      method: 'POST',
+      body: JSON.stringify({ edit_id: currentEditId }),
+    });
+    editStatus.textContent = `Applied — commit: ${data.commit_sha || 'ok'}`;
+    currentEditId = null;
+    toast('Edit applied and committed ✅', 'success');
+  } catch(e) {
+    editStatus.textContent = 'Apply failed: ' + e.message;
+    toast('Apply error: ' + e.message, 'error');
+  }
+});
+
+/* ── Undo ── */
+document.getElementById('edit-undo-btn').addEventListener('click', async () => {
+  editStatus.textContent = 'Reverting last edit…';
+  try {
+    const data = await api('/undo', { method: 'POST' });
+    editStatus.textContent = `Reverted — commit: ${data.revert_sha || 'ok'}`;
+    toast('Last edit reverted ↩', 'info');
+  } catch(e) {
+    editStatus.textContent = 'Undo failed: ' + e.message;
+    toast('Undo error: ' + e.message, 'error');
+  }
+});
+
+/* ── Auto-detect file path on paste into Old Code ── */
+cmOld.on('change', (cm, change) => {
+  if (change.origin !== 'paste') return;
+  setTimeout(async () => {
+    const code = cm.getValue().replace(/^[\r\n]+/, '').replace(/[\s\r\n]+$/, '');
+    if (!code) return;
+    try {
+      const params = new URLSearchParams({ q: code, path: getRepo(), limit: 1 });
+      const data = await api(`/search/code?${params}`);
+      if (data.matches && data.matches.length > 0) {
+        const file = data.matches[0].file;
+        document.getElementById('edit-file').value = file;
+        setEditorLang(file.split('.').pop().toLowerCase());
+        toast(`Auto-filled file path: ${file}`, 'success');
+      }
+    } catch (err) { /* silent */ }
+  }, 50);
+});
+
+/* ── Auto-detect file and old code on paste into New Code ── */
+cmNew.on('change', (cm, change) => {
+  if (change.origin !== 'paste') return;
+  setTimeout(async () => {
+    const code = cm.getValue();
+    if (!code || code.trim().length < 10) return;
+    
+    const hintFile = document.getElementById('edit-file').value.trim();
+    
+    try {
+      const data = await api('/search/detect-original', {
+        method: 'POST',
+        body: JSON.stringify({
+          code: code,
+          file_path_hint: hintFile || null
+        })
+      });
+      
+      if (data.found) {
+        document.getElementById('edit-file').value = data.file;
+        const ext = data.file.split('.').pop().toLowerCase();
+        setEditorLang(ext);
+        cmOld.setValue(data.source);
+        toast(`Auto-detected original function in ${data.file} and populated Old Code!`, 'success');
+      } else {
+        // Fallback: If AST symbol mapping fails, check exact match via code search
+        const cleanCode = code.replace(/^[\r\n]+/, '').replace(/[\s\r\n]+$/, '');
+        const params = new URLSearchParams({ q: cleanCode, path: getRepo(), limit: 1 });
+        const codeSearchRes = await api(`/search/code?${params}`);
+        if (codeSearchRes.matches && codeSearchRes.matches.length > 0) {
+          const file = codeSearchRes.matches[0].file;
+          document.getElementById('edit-file').value = file;
+          setEditorLang(file.split('.').pop().toLowerCase());
+          
+          const fullFileObj = await api(`/search/file-read?${new URLSearchParams({ file })}`);
+          cmOld.setValue(fullFileObj.content);
+          toast(`Matched exact file code in ${file} and populated Old Code!`, 'success');
+        }
+      }
+    } catch (err) {
+      console.warn("Auto-detect failed:", err);
+    }
+  }, 50);
+});
+
+/* ═══════════════════════════════════════════════════════════
+   BUILD / TEST / LINT
+═══════════════════════════════════════════════════════════ */
+const buildOutput = document.getElementById('build-output');
+
+function setBuildOutput(label, data) {
+  const ok    = data.exit_code === 0;
+  const color = ok ? 'out-ok' : 'out-err';
+  buildOutput.innerHTML =
+    `<span class="out-label">▶ ${label}</span>\n` +
+    `<span class="${color}">Exit code: ${data.exit_code}</span>\n\n` +
+    (data.stdout ? escHtml(data.stdout) + '\n' : '') +
+    (data.stderr ? `<span class="out-err">${escHtml(data.stderr)}</span>\n` : '');
+  if (ok) toast(`${label} succeeded ✅`, 'success');
+  else     toast(`${label} finished with errors`, 'error');
+}
+
+async function runWorker(action, langId) {
+  const lang      = document.getElementById(langId).value;
+  const repo_path = getRepo();
+  buildOutput.innerHTML = `<span class="out-label">▶ Running ${action}…</span>\n`;
+  try {
+    const data = await api(`/${action}`, {
+      method: 'POST',
+      body: JSON.stringify({ lang, repo_path }),
+    });
+    setBuildOutput(action, data);
+  } catch(e) {
+    buildOutput.innerHTML += `<span class="out-err">Error: ${escHtml(e.message)}</span>`;
+    toast(`${action} error: ` + e.message, 'error');
+  }
+}
+
+document.getElementById('build-run-btn').addEventListener('click', () => runWorker('build', 'build-lang-build'));
+document.getElementById('test-run-btn').addEventListener('click', () => runWorker('test',  'build-lang-test'));
+document.getElementById('lint-run-btn').addEventListener('click', () => runWorker('lint',  'build-lang-lint'));
+
+/* ═══════════════════════════════════════════════════════════
+   FOLDER PICKER
+═══════════════════════════════════════════════════════════ */
+document.getElementById('browse-btn').addEventListener('click', async () => {
+  const current = document.getElementById('repo-path').value.trim();
+
+  if (window.pywebview) {
+    // Running inside pywebview native window — use native OS folder dialog
+    const chosen = await window.pywebview.api.pick_folder(current);
+    if (chosen) {
+      document.getElementById('repo-path').value = chosen;
+      toast('Repo set: ' + chosen, 'success');
+      await triggerReindex(chosen);
+    }
+  } else {
+    // Fallback for plain browser: simple prompt
+    const input = prompt('Enter repository path:', current || '.');
+    if (input !== null && input.trim()) {
+      const chosen = input.trim();
+      document.getElementById('repo-path').value = chosen;
+      toast('Repo set: ' + chosen, 'success');
+      await triggerReindex(chosen);
+    }
+  }
+});
+
+/* ═══════════════════════════════════════════════════════════
+   SERVER STATUS PING
+═══════════════════════════════════════════════════════════ */
+let isIndexing = false;
+const statusDot = document.getElementById('status-dot');
+
+async function triggerReindex(path) {
+  if (isIndexing) return;
+  isIndexing = true;
+  statusDot.className = 'indexing';
+  statusDot.title = 'Indexing...';
+  toast(`Indexing ${path}…`, 'info');
+  try {
+    const data = await api('/reindex', {
+      method: 'POST',
+      body: JSON.stringify({ repo_path: path })
+    });
+    statusDot.className = '';
+    statusDot.title = 'Server ready';
+    toast(`Indexed ${data.indexed} symbols ✅`, 'success');
+  } catch(e) {
+    statusDot.className = 'error';
+    toast('Reindex failed: ' + e.message, 'error');
+  } finally {
+    isIndexing = false;
+  }
+}
+
+document.getElementById('repo-path').addEventListener('keydown', e => {
+  if (e.key === 'Enter') {
+    triggerReindex(getRepo());
+  }
+});
+
+async function checkServer() {
+  if (isIndexing) return;
+  try {
+    await fetch(BASE + '/docs');
+    statusDot.className = '';
+    statusDot.title = 'Server ready';
+  } catch {
+    statusDot.className = 'error';
+    statusDot.title = 'Server unreachable';
+  }
+}
+checkServer();
+setInterval(checkServer, 10_000);
+</script>
+</body>
+</html>
