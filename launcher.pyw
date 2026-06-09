@@ -1,3 +1,4 @@
+
 """
 launcher.pyw — Code Search Engine desktop launcher.
 
@@ -9,19 +10,20 @@ How it works:
   2. Starts FastAPI/Uvicorn in a daemon thread
   3. Polls until the server is up, animating the splash progress bar
   4. Closes the splash, opens the pywebview native window
-
-Requirements (already in requirements.txt / pyproject.toml):
-    pip install pywebview uvicorn fastapi
 """
 
 import sys
 import os
 import time
 import math
+import atexit
+import signal
 import threading
+import subprocess
 import urllib.request
 import urllib.error
-import tkinter as tk
+import traceback
+import logging
 
 # ── Ensure the local .venv is on sys.path ────────────────────────────────────
 _here = os.path.dirname(os.path.abspath(__file__))
@@ -29,30 +31,140 @@ _venv_site = os.path.join(_here, ".venv", "Lib", "site-packages")
 if os.path.isdir(_venv_site) and _venv_site not in sys.path:
     sys.path.insert(0, _venv_site)
 
-import webview
-import uvicorn
+# ── Setup Logging immediately ────────────────────────────────────────────────
+os.makedirs(os.path.join(_here, "logs"), exist_ok=True)
+log_file = os.path.join(_here, "logs", "launcher.log")
+
+logging.basicConfig(
+    filename=log_file,
+    filemode="w",
+    format="%(asctime)s [%(levelname)s] %(message)s",
+    level=logging.INFO
+)
+logger = logging.getLogger("launcher")
+
+# Global buffer to capture stdout/stderr so we can display it if the server crashes
+console_buffer = []
+
+# Redirect stdout/stderr to log file so we catch all exceptions/print statements
+class StreamToLogger:
+    def __init__(self, logger, log_level, collect=False):
+        self.logger = logger
+        self.log_level = log_level
+        self.collect = collect
+
+    def write(self, buf):
+        for line in buf.rstrip().splitlines():
+            line_str = line.rstrip()
+            self.logger.log(self.log_level, line_str)
+            if self.collect:
+                console_buffer.append(line_str)
+                # Keep the last 40 lines of console output
+                if len(console_buffer) > 40:
+                    console_buffer.pop(0)
+
+    def flush(self):
+        pass
+
+    def isatty(self):
+        return False
+
+# Capture both stdout and stderr so we get tracebacks and logs
+# sys.stdout = StreamToLogger(logger, logging.INFO, collect=True)
+# sys.stderr = StreamToLogger(logger, logging.ERROR, collect=True)
+
+logger.info("Launcher started.")
+logger.info(f"Site packages path injected: {_venv_site}")
+
+# ── Try imports and fail gracefully with GUI if packages are missing ────────
+try:
+    import tkinter as tk
+    from tkinter import messagebox
+    from tkinter import filedialog
+    import webview
+    import uvicorn
+    logger.info("Successfully imported tkinter, webview, and uvicorn.")
+except Exception as e:
+    error_detail = traceback.format_exc()
+    logger.critical(f"Failed to import dependencies:\n{error_detail}")
+    
+    # Try using tkinter to show the error dialog
+    try:
+        import tkinter as tk
+        from tkinter import messagebox
+        root = tk.Tk()
+        root.withdraw()
+        messagebox.showerror(
+            "Launcher Dependency Error",
+            f"Failed to load dependencies.\n\nError: {e}\n\nMake sure your virtual environment (.venv) is fully set up.\nLogs written to: logs/launcher.log"
+        )
+    except Exception:
+        pass
+    sys.exit(1)
 
 # ─────────────────────────────────────────────────────────────────────────────
 HOST = "127.0.0.1"
 PORT = 8000
 URL  = f"http://{HOST}:{PORT}"
 
+# Global to store background thread exceptions (if any raised directly)
+server_exception = None
+server_process = None
 
-# ══════════════════════════════════════════════════════════════════════════════
-#  JS API  —  exposed to the web page via  window.pywebview.api.*
-# ══════════════════════════════════════════════════════════════════════════════
+
+def cleanup_server():
+    """Kill the server subprocess if it's still running."""
+    global server_process
+    if server_process is not None:
+        try:
+            if server_process.poll() is None:
+                logger.info("Stopping server process pid=%s", server_process.pid)
+                server_process.terminate()
+                try:
+                    server_process.wait(timeout=3)
+                except subprocess.TimeoutExpired:
+                    logger.warning("Server did not terminate in 3s, killing.")
+                    server_process.kill()
+                    server_process.wait(timeout=2)
+                logger.info("Server process stopped.")
+        except Exception as e:
+            logger.error("Error stopping server: %s", e)
+        finally:
+            server_process = None
+
+
+atexit.register(cleanup_server)
+
+
+def _signal_handler(signum, frame):
+    """Handle SIGINT/SIGTERM to ensure server is stopped."""
+    logger.info("Signal %s received, cleaning up.", signum)
+    cleanup_server()
+    sys.exit(0)
+
+
+signal.signal(signal.SIGINT, _signal_handler)
+signal.signal(signal.SIGTERM, _signal_handler)
+
 class JSApi:
     """Methods exposed to the web page via window.pywebview.api.*"""
 
     def pick_folder(self, initial: str = "") -> str | None:
-        """Open a native OS folder-picker dialog and return the chosen path."""
-        import webview as _wv
-        result = _wv.windows[0].create_file_dialog(
-            _wv.FOLDER_DIALOG,
-            directory=initial or "",
-            allow_multiple=False,
+        """Open a modern native OS folder-picker dialog and return the chosen path."""
+        logger.info("Folder picker opened by webview API.")
+        root = tk.Tk()
+        root.withdraw()
+        root.attributes("-topmost", True)
+        
+        result = filedialog.askdirectory(
+            initialdir=initial or "",
+            title="Select Repository Folder",
+            parent=root
         )
-        return result[0] if result else None
+        
+        root.destroy()
+        logger.info(f"Folder picker returned: {result}")
+        return result if result else None
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -72,6 +184,7 @@ class SplashScreen:
     SUCCESS2= "#9ae6b4"
 
     def __init__(self):
+        logger.info("Initializing splash screen UI.")
         self.root = tk.Tk()
         self.root.overrideredirect(True)        # borderless window
         self.root.configure(bg=self.BG)
@@ -93,12 +206,12 @@ class SplashScreen:
         self._build_ui()
 
     def exit_launcher(self):
-        """Force quit the entire python launcher execution."""
+        """Close the launcher window."""
+        logger.info("Exit launcher requested.")
         try:
             self.root.destroy()
         except Exception:
             pass
-        os._exit(0)  # Immediate hard exit to kill background threads as well
 
     # ── Layout ────────────────────────────────────────────────────────────────
     def _build_ui(self):
@@ -263,92 +376,157 @@ class SplashScreen:
 # ══════════════════════════════════════════════════════════════════════════════
 #  BACKEND
 # ══════════════════════════════════════════════════════════════════════════════
-def start_server() -> None:
-    """Start FastAPI/Uvicorn (blocking — runs in a daemon thread)."""
+def kill_stale_server():
+    """Kill any existing process bound to our port so we can start fresh."""
+    try:
+        import socket
+        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        result = sock.connect_ex((HOST, PORT))
+        sock.close()
+        if result == 0:
+            # Port is in use — find and kill the process
+            logger.info("Port %d is in use, killing stale process.", PORT)
+            if os.name == "nt":
+                # Windows: use netstat + taskkill
+                import re
+                out = subprocess.check_output(
+                    ["netstat", "-ano", "-p", "tcp"],
+                    creationflags=subprocess.CREATE_NO_WINDOW,
+                ).decode(errors="replace")
+                for line in out.splitlines():
+                    if f":{PORT}" in line and "LISTENING" in line:
+                        parts = line.split()
+                        stale_pid = int(parts[-1])
+                        logger.info("Killing stale server PID=%d", stale_pid)
+                        subprocess.run(
+                            ["taskkill", "/F", "/PID", str(stale_pid)],
+                            creationflags=subprocess.CREATE_NO_WINDOW,
+                            capture_output=True,
+                        )
+                        time.sleep(0.5)
+                        break
+            else:
+                # Unix: use fuser
+                subprocess.run(["fuser", "-k", f"{PORT}/tcp"],
+                               capture_output=True)
+                time.sleep(0.5)
+    except Exception as e:
+        logger.warning("Could not check/kill stale server: %s", e)
+
+
+def start_server():
+    global server_process
+
     os.chdir(_here)
-    uvicorn.run(
-        "codeengine.app:app",
-        host=HOST,
-        port=PORT,
-        log_level="warning",
+
+    # Kill any leftover server on our port
+    kill_stale_server()
+
+    # Use the venv's Python executable
+    venv_python = os.path.join(_here, ".venv", "Scripts", "python.exe")
+
+    # Set up environment with PYTHONPATH to find codeengine module
+    env = os.environ.copy()
+    env["PYTHONPATH"] = _here
+
+    server_process = subprocess.Popen(
+        [
+            venv_python,
+            "-m",
+            "uvicorn",
+            "codeengine.app:app",
+            "--host",
+            HOST,
+            "--port",
+            str(PORT),
+            "--log-level",
+            "debug",
+        ],
+        cwd=_here,
+        env=env,
+        creationflags=subprocess.CREATE_NO_WINDOW,
+    )
+
+    logger.info(
+        f"Started uvicorn process pid={server_process.pid}"
     )
 
 
-def server_poller(splash: SplashScreen, timeout: float = 30.0) -> None:
-    """Poll until the server responds, then signal the splash to close."""
-    STEPS = [
-        "Starting server…",
-        "Loading database…",
-        "Indexing repository…",
-        "Setting up file watchers…",
-        "Almost there…",
-    ]
-    splash.update(0.04, "Starting server…")
-    time.sleep(0.3)
+def server_waiter(splash: SplashScreen) -> None:
+    """Wait briefly for the server subprocess to start, then close splash."""
+    splash.update(0.1, "Starting server…")
+    time.sleep(1.0)
 
-    deadline = time.monotonic() + timeout
-    step = 0
+    # Check if the server process died
+    if server_process and server_process.poll() is not None:
+        logger.error("Server process died unexpectedly.")
+        splash.update(0.0, "Server failed to start!")
 
-    while time.monotonic() < deadline:
-        try:
-            urllib.request.urlopen(URL + "/docs", timeout=0.8)
-            splash.update(1.0, "Ready!  Launching…")
-            splash.close_after(500)
-            return
-        except urllib.error.URLError:
-            pass
+        error_details = "\n".join(console_buffer[-25:])
+        if not error_details:
+            error_details = server_exception or "No error output captured in stderr."
 
-        # Asymptotic approach to 90% so the bar never stalls at 100% prematurely
-        fake_pct = 0.04 + 0.82 * (1 - math.exp(-step / 14))
-        label    = STEPS[min(step // 4, len(STEPS) - 1)]
-        splash.update(fake_pct, label)
-        step += 1
-        time.sleep(0.4)
+        def show_server_error():
+            root = tk.Tk()
+            root.withdraw()
+            messagebox.showerror(
+                "Server Startup Failure",
+                f"The Code Search Engine server failed to start.\n\nCaptured Console Output/Traceback:\n{error_details}\n\nFull logs written to: logs/launcher.log"
+            )
 
-    # Timed out — open anyway
-    splash.update(1.0, "Ready!")
-    splash.close_after(400)
+        splash.root.after(0, show_server_error)
+        return
+
+    logger.info("Server started. Closing splash and launching webview.")
+    splash.update(1.0, "Ready!  Launching…")
+    splash.close_after(500)
 
 
 if __name__ == "__main__":
-    # Check if server is already running
-    server_already_running = False
-    try:
-        with urllib.request.urlopen(URL + "/docs", timeout=0.5) as response:
-            if response.status == 200:
-                server_already_running = True
-    except Exception:
-        pass
-
-    # 1️⃣  Show the splash screen immediately (main thread)
+    # 1 Show the splash screen immediately (main thread)
     splash = SplashScreen()
 
-    # 2️⃣  Start the FastAPI backend ONLY if not already running
-    if not server_already_running:
-        threading.Thread(target=start_server, daemon=True).start()
-        # 3️⃣  Poll server in background — drives the splash progress bar
-        threading.Thread(target=server_poller, args=(splash,), daemon=True).start()
-    else:
-        # Jump directly to ready
-        def skip_splash():
-            time.sleep(0.1)
-            splash.update(1.0, "Ready! (Connected to running server)")
-            splash.close_after(300)
-        threading.Thread(target=skip_splash, daemon=True).start()
+    # 2 Start the FastAPI backend
+    logger.info("Starting a new local server process.")
+    start_server()
+    # 3 Wait briefly for server subprocess to boot — drives the splash progress bar
+    threading.Thread(target=server_waiter, args=(splash,), daemon=True).start()
 
     # 4️⃣  Block until the splash closes itself (server is ready)
     splash.mainloop()
 
-    # 5️⃣  Splash is gone → open the main native window
-    api = JSApi()
-    webview.create_window(
-        title  = "Code Search Engine",
-        url    = URL,
-        width  = 1280,
-        height = 820,
-        min_size    = (960, 640),
-        resizable   = True,
-        text_select = True,
-        js_api      = api,
-    )
-    webview.start(debug=True)   # blocks until window is closed
+    # 5️⃣  Splash is gone → open the main native window if server didn't fail
+    if server_process and server_process.poll() is not None:
+        logger.info("Server crashed. Exiting launcher instead of opening webview.")
+        cleanup_server()
+        sys.exit(1)
+
+    logger.info("Opening pywebview window.")
+    try:
+        api = JSApi()
+        webview.create_window(
+            title  = "Code Search Engine",
+            url    = URL,
+            width  = 1280,
+            height = 820,
+            min_size    = (960, 640),
+            resizable   = True,
+            text_select = True,
+            js_api      = api,
+        )
+        webview.start(debug=True)   # blocks until window is closed
+        logger.info("Webview window closed. Launcher exiting clean.")
+    except Exception as e:
+        logger.critical(f"Webview encountered an error:\n{traceback.format_exc()}")
+        try:
+            root = tk.Tk()
+            root.withdraw()
+            messagebox.showerror(
+                "Webview Window Error",
+                f"Failed to open native window.\n\nError: {e}\n\nLogs written to: logs/launcher.log"
+            )
+        except Exception:
+            pass
+        sys.exit(1)
+    finally:
+        cleanup_server()

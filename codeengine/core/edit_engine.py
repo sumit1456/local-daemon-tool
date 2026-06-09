@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import ast
 import time
 import difflib
 import textwrap
@@ -8,6 +7,7 @@ import ulid
 from pathlib import Path
 
 from codeengine.database.sqlite import get_db
+from codeengine.core.ast_engine import parse_blocks_from_code
 from codeengine.models.edit_models import (
     ApplyResult,
     UndoResult,
@@ -54,62 +54,23 @@ def _find_repo_for_root(root: Path) -> git.Repo:
 # AST-based block parser
 # ---------------------------------------------------------------------------
 
-def _parse_blocks(source: str) -> list[CodeBlock]:
+def _parse_blocks(source: str, file_path_hint: str | None = None, lang_hint: str | None = None) -> list[CodeBlock]:
     """
     Parse top-level nodes from source into CodeBlock list.
 
+    Uses tree-sitter for all supported languages (Python, JS, TS, Java, Go, Rust).
     Handles:
       - import / from-import  → kind="import", name=None
-      - def / async def       → kind="function", name=<func name>
-      - class                 → kind="class",    name=<class name>
+      - def / async def / fn  → kind="function", name=<func name>
+      - class / struct / impl → kind="class",    name=<class name>
       - UPPER_CASE assignment → kind="constant",  name=<var name>
       - anything else         → kind="other",     name=None
     """
-    try:
-        tree = ast.parse(source)
-    except SyntaxError as e:
-        raise ValueError(f"New code has a syntax error: {e}")
-
-    lines = source.splitlines(keepends=True)
-    blocks: list[CodeBlock] = []
-
-    for node in tree.body:
-        start = node.lineno - 1          # 0-indexed
-        # ast.end_lineno available in Python 3.8+
-        end = node.end_lineno            # 1-indexed inclusive → slice end
-
-        block_src = "".join(lines[start:end])
-
-        if isinstance(node, (ast.Import, ast.ImportFrom)):
-            blocks.append(CodeBlock(kind="import", name=None, source=block_src))
-
-        elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-            blocks.append(CodeBlock(kind="function", name=node.name, source=block_src))
-
-        elif isinstance(node, ast.ClassDef):
-            blocks.append(CodeBlock(kind="class", name=node.name, source=block_src))
-
-        elif isinstance(node, ast.Assign):
-            # Treat module-level ALL_CAPS assignments as constants
-            names = [
-                t.id for t in node.targets
-                if isinstance(t, ast.Name) and t.id.isupper()
-            ]
-            if names:
-                blocks.append(CodeBlock(kind="constant", name=names[0], source=block_src))
-            else:
-                blocks.append(CodeBlock(kind="other", name=None, source=block_src))
-
-        elif isinstance(node, ast.AnnAssign):
-            if isinstance(node.target, ast.Name) and node.target.id.isupper():
-                blocks.append(CodeBlock(kind="constant", name=node.target.id, source=block_src))
-            else:
-                blocks.append(CodeBlock(kind="other", name=None, source=block_src))
-
-        else:
-            blocks.append(CodeBlock(kind="other", name=None, source=block_src))
-
-    return blocks
+    raw_blocks = parse_blocks_from_code(source, file_path_hint=file_path_hint, lang_hint=lang_hint)
+    return [
+        CodeBlock(kind=kind, name=name, source=src)
+        for kind, name, src in raw_blocks
+    ]
 
 
 # ---------------------------------------------------------------------------

@@ -35,3 +35,19 @@ class FunctionResult(BaseModel):
     line_start: int
     line_end: int
     source: str                  # full source text of the function
+
+class SymbolUsage(BaseModel):
+    """Schema representing a single usage/reference of a symbol."""
+    symbol_name: str
+    kind: str
+    file: str
+    line: int
+
+class DocstringResult(BaseModel):
+    """Schema representing docstring content for a symbol."""
+    symbol_name: str
+    kind: str
+    file: str
+    content: str
+    line_start: int
+    line_end: int

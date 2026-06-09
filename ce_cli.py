@@ -283,6 +283,10 @@ Usage (from the local-daemon-tool directory):
     .venv\Scripts\python.exe ce_cli.py callees  "symbol_name"
     .venv\Scripts\python.exe ce_cli.py signature "rel/path/to/file.py" 42 89
     .venv\Scripts\python.exe ce_cli.py body      "rel/path/to/file.py" 42 89
+    .venv\Scripts\python.exe ce_cli.py detect    "def foo(): pass"
+    .venv\Scripts\python.exe ce_cli.py preview-smart "rel/path/to/file.py" "new_code"
+    .venv\Scripts\python.exe ce_cli.py apply-smart "edit_id"
+    .venv\Scripts\python.exe ce_cli.py parse-blocks "def foo(): pass"
     .venv\Scripts\python.exe ce_cli.py ping
 """
 
@@ -425,7 +429,7 @@ def cmd_index(args) -> None:
 
 def cmd_overview(args) -> None:
     """Get complete repo overview including call graph. Pass --files to scope."""
-    data = _get("/search/overview", files=args.files if args.files else None)
+    data = _get("/search/overview", files=args.files)
     _out(data)
 
 
@@ -451,11 +455,46 @@ def cmd_signature(args) -> None:
 
 
 def cmd_body(args) -> None:
-    """Get full function body (exact lines only, nothing surrounding)."""
+    """Get full function body (exact lines, no noise)."""
     data = _get("/search/function-body",
                 file=args.file,
                 line_start=args.line_start,
                 line_end=args.line_end)
+    _out(data)
+
+
+def cmd_detect(args) -> None:
+    """Detect original source block of a code snippet."""
+    data = _post("/search/detect-original", {
+        "code": args.code,
+        "file_path_hint": args.file_hint,
+        "lang_hint": args.lang_hint,
+    })
+    _out(data)
+
+
+def cmd_preview_smart(args) -> None:
+    """Preview a smart block-based code edit (unified diff)."""
+    data = _post("/preview-smart-edit", {
+        "file": args.file,
+        "new_code": args.new_code,
+    })
+    _out(data)
+
+
+def cmd_apply_smart(args) -> None:
+    """Apply a smart edit preview to disk and commit."""
+    data = _post("/apply-smart-edit", {"edit_id": args.edit_id})
+    _out(data)
+
+
+def cmd_parse_blocks(args) -> None:
+    """Parse pasted code into top-level blocks."""
+    data = _post("/parse-blocks", {
+        "code": args.code,
+        "file_path_hint": args.file_hint,
+        "lang_hint": args.lang_hint,
+    })
     _out(data)
 
 
@@ -545,6 +584,27 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("line_start", type=int, help="First line of the function")
     s.add_argument("line_end",   type=int, help="Last line of the function")
 
+    # detect
+    s = sub.add_parser("detect", help="Detect original source block of a code snippet")
+    s.add_argument("code", help="Code snippet")
+    s.add_argument("--file_hint", default=None, help="Optional file path hint")
+    s.add_argument("--lang_hint", default=None, help="Optional language hint")
+
+    # preview-smart
+    s = sub.add_parser("preview-smart", help="Preview a smart block-based code edit")
+    s.add_argument("file", help="Relative file path")
+    s.add_argument("new_code", help="New code blocks to apply")
+
+    # apply-smart
+    s = sub.add_parser("apply-smart", help="Apply a smart edit preview")
+    s.add_argument("edit_id", help="edit_id from the preview-smart response")
+
+    # parse-blocks
+    s = sub.add_parser("parse-blocks", help="Parse pasted code into top-level blocks")
+    s.add_argument("code", help="Code snippet")
+    s.add_argument("--file_hint", default=None, help="Optional file path hint")
+    s.add_argument("--lang_hint", default=None, help="Optional language hint")
+
     return p
 
 
@@ -566,6 +626,10 @@ HANDLERS = {
     "callees":   cmd_callees,
     "signature": cmd_signature,
     "body":      cmd_body,
+    "detect":        cmd_detect,
+    "preview-smart": cmd_preview_smart,
+    "apply-smart":   cmd_apply_smart,
+    "parse-blocks":  cmd_parse_blocks,
 }
 
 if __name__ == "__main__":

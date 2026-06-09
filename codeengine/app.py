@@ -1,12 +1,89 @@
 import os
+import sys
+import json
+import logging
+import asyncio
 from pathlib import Path
 import time
 from datetime import datetime
+from collections import deque
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, StreamingResponse
 from contextlib import asynccontextmanager
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(name)s] %(levelname)s  %(message)s",
+    datefmt="%H:%M:%S",
+)
+logger = logging.getLogger("codeengine")
+
+
+# ── Log streaming infrastructure ─────────────────────────────────────────────
+_log_subscribers: list = []
+_log_buffer: deque = deque(maxlen=500)
+
+class _StreamHandler(logging.Handler):
+    """Push log records to SSE subscribers."""
+    def emit(self, record):
+        try:
+            msg = self.format(record)
+            entry = {
+                "time": datetime.now().strftime("%H:%M:%S"),
+                "level": record.levelname,
+                "name": record.name,
+                "msg": msg,
+            }
+            _log_buffer.append(entry)
+            for q in _log_subscribers:
+                try:
+                    q.put_nowait(entry)
+                except asyncio.QueueFull:
+                    pass
+        except Exception:
+            pass
+
+_stream_handler = _StreamHandler()
+_stream_handler.setFormatter(logging.Formatter("%(message)s"))
+logging.getLogger().addHandler(_stream_handler)
+
+
+class _StdioCapture:
+    """Capture stdout/stderr writes and forward to log stream."""
+    def __init__(self, original, level):
+        self._orig = original
+        self._level = level
+        self._buf = ""
+
+    def write(self, s):
+        self._orig.write(s)
+        self._buf += s
+        if "\n" in self._buf:
+            lines = self._buf.split("\n")
+            self._buf = lines.pop()
+            for line in lines:
+                line = line.strip()
+                if line:
+                    entry = {
+                        "time": datetime.now().strftime("%H:%M:%S"),
+                        "level": self._level,
+                        "name": "server",
+                        "msg": line,
+                    }
+                    _log_buffer.append(entry)
+                    for q in _log_subscribers:
+                        try:
+                            q.put_nowait(entry)
+                        except asyncio.QueueFull:
+                            pass
+
+    def flush(self):
+        self._orig.flush()
+
+sys.stdout = _StdioCapture(sys.stdout, "INFO")
+sys.stderr = _StdioCapture(sys.stderr, "ERROR")
 
 def load_dotenv():
     env_path = Path(__file__).resolve().parent.parent / ".env"
@@ -43,13 +120,24 @@ _STATIC_DIR = Path(__file__).parent / "static"
 # Lifespan handler (FastAPI v0.110+)
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Initialize DB, index repository, and start watcher on startup."""
+
+    print("1 init_db")
     await init_db()
-    repo = os.getenv("REPO_PATH", ".")
-    await index_repo(repo)
-    start_watcher(repo)
+
+    print("2 init_db done")
+
+    # Indexing happens only when a directory is selected via /reindex endpoint
+    # repo = os.getenv("REPO_PATH", ".")
+    # print(f"3 indexing {repo}")
+    # await index_repo(repo)
+    # print("4 indexing complete")
+    # start_watcher(repo)
+    # print("5 watcher started")
+
     yield
+
     stop_watcher()
+    
 
 class ReindexRequest(BaseModel):
     repo_path: str
@@ -111,6 +199,93 @@ async def reindex_repo(body: ReindexRequest):
     count = await index_repo(body.repo_path)
     start_watcher(body.repo_path)
     return {"status": "ok", "indexed": count, "repo": body.repo_path}
+
+
+@app.post("/reindex/stream")
+async def reindex_repo_stream(body: ReindexRequest):
+    """SSE endpoint — streams indexing progress events to the frontend."""
+    os.environ["REPO_PATH"] = body.repo_path
+
+    async def event_generator():
+        import asyncio, queue
+
+        q: queue.Queue = queue.Queue()
+
+        async def on_progress(event_type, data):
+            q.put(("progress", event_type, data))
+
+        async def run_index():
+            try:
+                await clear_index()
+                await on_progress("clear", {})
+                count = await index_repo(body.repo_path, on_progress=on_progress)
+                await on_progress("watcher", {"repo": body.repo_path})
+                start_watcher(body.repo_path)
+            except Exception as exc:
+                await on_progress("error", {"message": str(exc)})
+
+        loop = asyncio.get_event_loop()
+        index_task = asyncio.create_task(run_index())
+
+        while not index_task.done() or not q.empty():
+            try:
+                kind, event_type, data = q.get_nowait()
+                payload = json.dumps({"type": event_type, **data})
+                yield f"data: {payload}\n\n"
+            except queue.Empty:
+                await asyncio.sleep(0.05)
+
+        # Drain remaining events
+        while not q.empty():
+            kind, event_type, data = q.get_nowait()
+            payload = json.dumps({"type": event_type, **data})
+            yield f"data: {payload}\n\n"
+
+        yield "data: [DONE]\n\n"
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
+
+
+@app.get("/logs/stream")
+async def stream_logs():
+    """SSE endpoint — streams server log output to the FastAPI terminal."""
+    q: asyncio.Queue = asyncio.Queue(maxsize=200)
+    _log_subscribers.append(q)
+
+    async def event_generator():
+        # Replay buffered logs first
+        for entry in _log_buffer:
+            yield f"data: {json.dumps(entry)}\n\n"
+        try:
+            while True:
+                entry = await asyncio.wait_for(q.get(), timeout=15)
+                yield f"data: {json.dumps(entry)}\n\n"
+        except asyncio.TimeoutError:
+            yield ": keepalive\n\n"
+        except asyncio.CancelledError:
+            pass
+        finally:
+            if q in _log_subscribers:
+                _log_subscribers.remove(q)
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
+
 
 # ── Static files (served AFTER API routes to avoid shadowing) ────────────────
 if _STATIC_DIR.is_dir():

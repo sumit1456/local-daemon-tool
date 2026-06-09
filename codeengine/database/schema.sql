@@ -32,9 +32,26 @@ CREATE INDEX IF NOT EXISTS idx_symbols_file ON symbols(file_id);
 CREATE TABLE IF NOT EXISTS call_edges (
     caller_id   INTEGER NOT NULL REFERENCES symbols(id) ON DELETE CASCADE,
     callee_name TEXT NOT NULL,
+    callee_file TEXT,
     callee_id   INTEGER REFERENCES symbols(id) ON DELETE SET NULL
 );
 
 CREATE INDEX IF NOT EXISTS idx_call_edges_caller ON call_edges(caller_id);
 CREATE INDEX IF NOT EXISTS idx_call_edges_callee ON call_edges(callee_id);
+
+CREATE TABLE IF NOT EXISTS symbol_references (
+    symbol_id   INTEGER NOT NULL REFERENCES symbols(id) ON DELETE CASCADE,
+    file_id     INTEGER NOT NULL REFERENCES files(id) ON DELETE CASCADE,
+    line        INTEGER NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_references_symbol ON symbol_references(symbol_id);
+CREATE INDEX IF NOT EXISTS idx_references_file ON symbol_references(file_id);
+
+CREATE TABLE IF NOT EXISTS docstrings (
+    symbol_id   INTEGER PRIMARY KEY REFERENCES symbols(id) ON DELETE CASCADE,
+    content     TEXT NOT NULL,
+    line_start  INTEGER NOT NULL,
+    line_end    INTEGER NOT NULL
+);
 

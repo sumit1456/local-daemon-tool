@@ -732,8 +732,309 @@
     .toast.info    { background: #1a2540; border: 1px solid rgba(99,179,237,0.3);  color: var(--accent); }
     @keyframes slideUp { from { opacity:0; transform:translateY(12px); } to { opacity:1; transform:translateY(0); } }
 
+    /* ── TERMINAL CONTAINER (resizable, two-panel) ── */
+    #terminal-container {
+      display: none;
+      position: fixed; bottom: 0; left: 0; right: 0;
+      height: 320px; z-index: 100;
+      background: var(--bg-surface);
+      border-top: 1px solid var(--border-accent);
+      flex-direction: column;
+      box-shadow: 0 -4px 30px rgba(0,0,0,0.5);
+    }
+    #terminal-container.open { display: flex; }
+
+    /* ── TERMINAL TOOLBAR ── */
+    .term-toolbar {
+      display: flex; align-items: center; gap: 10px;
+      padding: 6px 14px;
+      background: var(--bg-elevated);
+      border-bottom: 1px solid var(--border-subtle);
+      flex-shrink: 0;
+    }
+    .term-toolbar-label {
+      font-size: 10px; font-weight: 700; letter-spacing: 0.1em;
+      color: var(--text-muted); text-transform: uppercase;
+    }
+    .term-toggle-group {
+      display: flex; border: 1.5px solid var(--border-mid);
+      border-radius: 6px; overflow: hidden;
+    }
+    .term-toggle {
+      padding: 4px 12px; font-size: 11px; font-weight: 600;
+      background: transparent; border: none; border-right: 1px solid var(--border-mid);
+      color: var(--text-muted); cursor: pointer; transition: var(--transition);
+      letter-spacing: 0.03em;
+    }
+    .term-toggle:last-child { border-right: none; }
+    .term-toggle.active {
+      background: var(--accent); color: #0d0f14;
+    }
+    .term-toggle:hover:not(.active) {
+      background: var(--bg-hover); color: var(--text-primary);
+    }
+
+    .term-panel {
+      display: flex; flex-direction: column;
+      min-height: 80px; overflow: hidden;
+    }
+    .term-panel-header {
+      display: flex; align-items: center; gap: 10px;
+      padding: 8px 16px;
+      border-bottom: 1px solid var(--border-subtle);
+      flex-shrink: 0;
+      background: var(--bg-elevated);
+    }
+    .term-panel-header .idx-title {
+      font-size: 12px; font-weight: 700; color: var(--accent);
+      letter-spacing: 0.04em;
+    }
+    .term-panel-header .idx-title.fastapi-title {
+      color: var(--success);
+    }
+    .term-panel-header .idx-stats {
+      flex: 1; font-size: 11.5px; font-family: var(--font-mono);
+      color: var(--text-muted);
+    }
+    .term-panel-header .idx-close {
+      width: 22px; height: 22px; border-radius: 5px;
+      background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.08);
+      color: var(--text-muted); font-size: 11px;
+      display: flex; align-items: center; justify-content: center;
+      cursor: pointer; transition: var(--transition);
+    }
+    .term-panel-header .idx-close:hover { color: var(--danger); background: rgba(252,129,129,0.1); }
+    .term-progress-bar-wrap {
+      height: 3px; background: var(--bg-active); flex-shrink: 0;
+    }
+    .term-progress-bar {
+      height: 100%; width: 0%; background: linear-gradient(90deg, var(--accent), var(--success));
+      transition: width 200ms ease;
+    }
+    .term-log {
+      flex: 1; overflow-y: auto; padding: 8px 16px;
+      font-family: var(--font-mono); font-size: 11.5px;
+      line-height: 1.7; color: var(--text-secondary);
+      background: #0a0c10;
+    }
+    .term-log::-webkit-scrollbar { width: 6px; }
+    .term-log::-webkit-scrollbar-thumb { background: #2a2f3e; border-radius: 99px; }
+
+    /* ── RESIZE DIVIDER ── */
+    .term-divider {
+      height: 5px; cursor: ns-resize;
+      background: var(--bg-elevated);
+      border-top: 1px solid var(--border-subtle);
+      border-bottom: 1px solid var(--border-subtle);
+      flex-shrink: 0;
+      display: flex; align-items: center; justify-content: center;
+      transition: background var(--transition);
+    }
+    .term-divider:hover { background: var(--accent-glow); }
+    .term-divider::after {
+      content: ''; width: 40px; height: 3px; border-radius: 2px;
+      background: var(--text-muted); opacity: 0.5;
+    }
+    .term-divider.dragging { background: var(--accent-glow); }
+    .term-divider.dragging::after { opacity: 1; background: var(--accent); }
+
+    .log-line { white-space: pre-wrap; word-break: break-all; }
+    .log-time { color: var(--text-muted); margin-right: 8px; }
+    .log-start { color: var(--accent); font-weight: 600; }
+    .log-indexed { color: var(--success); }
+    .log-skipped { color: var(--text-muted); }
+    .log-error { color: var(--danger); }
+    .log-done { color: var(--accent-bright); font-weight: 700; }
+
+    .log-level-INFO { color: var(--text-secondary); }
+    .log-level-WARNING { color: var(--warning); }
+    .log-level-ERROR { color: var(--danger); }
+    .log-level-CRITICAL { color: var(--danger); font-weight: 700; }
+    .log-level-DEBUG { color: var(--text-muted); }
+
     /* misc */
     .separator { height: 1px; background: var(--border-subtle); margin: 4px 0; }
+
+    /* ── MODE TOGGLE PILL ── */
+    .mode-toggle {
+      display: flex; border: 1.5px solid var(--border-mid);
+      border-radius: 8px; overflow: hidden; flex-shrink: 0;
+    }
+    .mode-btn {
+      padding: 5px 14px; font-size: 12px; font-weight: 600;
+      background: transparent; border: none; color: var(--text-muted);
+      cursor: pointer; transition: var(--transition); letter-spacing: 0.04em;
+    }
+    .mode-btn.active {
+      background: var(--accent); color: #0d0f14;
+    }
+    .mode-btn:hover:not(.active) { background: var(--bg-hover); color: var(--text-primary); }
+
+    /* ── MULTI-BLOCK AREA ── */
+    #multi-block-area {
+      display: flex; flex-direction: column;
+      flex: 1; overflow-y: auto; padding: 10px 20px 16px;
+      gap: 0;
+    }
+
+    /* Paste zone */
+    #mb-paste-zone {
+      border: 2px dashed var(--border-mid);
+      border-radius: var(--radius-md);
+      padding: 14px 18px;
+      margin-bottom: 14px;
+      display: flex; gap: 12px; align-items: flex-start;
+      background: var(--bg-surface);
+      transition: border-color var(--transition);
+    }
+    #mb-paste-zone:focus-within { border-color: var(--border-accent); }
+    #mb-paste-zone textarea {
+      flex: 1; resize: none;
+      background: transparent; border: none; outline: none;
+      color: var(--text-primary); font-family: var(--font-mono);
+      font-size: 12.5px; line-height: 1.75;
+      min-height: 80px; max-height: 220px;
+      overflow-y: auto;
+    }
+    #mb-parse-btn {
+      flex-shrink: 0; height: 36px; padding: 0 16px;
+      background: var(--accent); border: none;
+      border-radius: var(--radius-sm); color: #0d0f14;
+      font-size: 12.5px; font-weight: 700; cursor: pointer;
+      transition: var(--transition);
+    }
+    #mb-parse-btn:hover { background: var(--accent-bright); }
+
+    /* Status bar for multi mode */
+    #mb-status-bar {
+      display: flex; align-items: center; gap: 10px;
+      padding: 7px 0 10px;
+      font-size: 12px; color: var(--text-muted);
+    }
+    #mb-status-bar .mb-count {
+      background: var(--bg-elevated); border: 1px solid var(--border-subtle);
+      border-radius: 5px; padding: 2px 8px;
+      font-family: var(--font-mono); font-size: 11.5px; color: var(--accent);
+    }
+    #mb-apply-all-btn {
+      margin-left: auto;
+      height: 28px; padding: 0 14px;
+      background: rgba(104,211,145,0.12);
+      border: 1px solid rgba(104,211,145,0.3);
+      border-radius: var(--radius-sm); color: var(--success);
+      font-size: 12px; font-weight: 600; cursor: pointer;
+      transition: var(--transition);
+    }
+    #mb-apply-all-btn:hover { background: rgba(104,211,145,0.2); }
+    #mb-apply-all-btn:disabled { opacity: 0.35; pointer-events: none; }
+
+    /* Block stack */
+    #mb-blocks-stack { display: flex; flex-direction: column; gap: 14px; }
+
+    /* Each block row */
+    .mb-block-row {
+      border: 1.5px solid var(--border-mid);
+      border-radius: var(--radius-md);
+      overflow: hidden;
+      background: #0e1117;
+      animation: fadeIn 0.22s ease;
+    }
+    @keyframes fadeIn { from { opacity:0; transform:translateY(6px); } to { opacity:1; transform:translateY(0); } }
+    .mb-block-row.applied { border-color: rgba(104,211,145,0.4); }
+    .mb-block-row.failed  { border-color: rgba(252,129,129,0.4); }
+
+    /* Block header */
+    .mb-block-header {
+      display: flex; align-items: center; gap: 8px;
+      padding: 8px 12px;
+      background: #13161e;
+      border-bottom: 1px solid rgba(255,255,255,0.05);
+      cursor: pointer;
+      user-select: none;
+    }
+    .mb-block-kind {
+      font-size: 10px; font-weight: 700; letter-spacing: 0.07em; text-transform: uppercase;
+      padding: 2px 7px; border-radius: 4px; flex-shrink: 0;
+    }
+    .kind-function { background: rgba(99,179,237,0.14); color: var(--accent); border: 1px solid rgba(99,179,237,0.25); }
+    .kind-class    { background: rgba(183,148,244,0.14); color: var(--purple); border: 1px solid rgba(183,148,244,0.25); }
+    .kind-import   { background: rgba(246,173,85,0.12);  color: var(--warning); border: 1px solid rgba(246,173,85,0.25); }
+    .kind-constant { background: rgba(104,211,145,0.12); color: var(--success); border: 1px solid rgba(104,211,145,0.25); }
+    .kind-other    { background: rgba(255,255,255,0.06);  color: var(--text-muted); border: 1px solid rgba(255,255,255,0.1); }
+    .mb-block-name {
+      flex: 1; font-family: var(--font-mono); font-size: 12px;
+      color: var(--text-primary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    }
+    .mb-block-chevron { color: var(--text-muted); font-size: 11px; transition: transform var(--transition); }
+    .mb-block-row.collapsed .mb-block-chevron { transform: rotate(-90deg); }
+    .mb-block-dismiss {
+      width: 22px; height: 22px; border-radius: 4px;
+      background: rgba(255,255,255,0.04); border: 1px solid rgba(255,255,255,0.07);
+      color: var(--text-muted); font-size: 11px; cursor: pointer;
+      display: flex; align-items: center; justify-content: center;
+      transition: var(--transition); flex-shrink: 0;
+    }
+    .mb-block-dismiss:hover { color: var(--danger); background: rgba(252,129,129,0.1); border-color: rgba(252,129,129,0.3); }
+
+    /* Block body with side-by-side editors */
+    .mb-block-body { display: flex; flex-direction: column; }
+    .mb-block-row.collapsed .mb-block-body { display: none; }
+    .mb-editor-row {
+      display: grid; grid-template-columns: 1fr 1fr;
+      gap: 0; border-top: 1px solid rgba(255,255,255,0.04);
+    }
+    .mb-pane {
+      display: flex; flex-direction: column;
+      height: 220px;
+      border-right: 1px solid rgba(255,255,255,0.05);
+    }
+    .mb-pane:last-child { border-right: none; }
+    .mb-pane-label {
+      padding: 5px 10px;
+      font-size: 10px; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase;
+      color: var(--text-muted); background: #13161e;
+      border-bottom: 1px solid rgba(255,255,255,0.04);
+      display: flex; align-items: center; gap: 6px;
+    }
+    .mb-pane-label .mb-pane-status {
+      margin-left: auto; font-size: 10px;
+    }
+    .mb-pane .CodeMirror {
+      flex: 1; height: 100%;
+      background: #0e1117 !important;
+      font-family: var(--font-mono); font-size: 12px; line-height: 1.7;
+    }
+    .mb-pane .CodeMirror-gutters { background: #0e1117 !important; border-right: 1px solid #1e2333 !important; }
+    .mb-pane .CodeMirror-linenumber { color: #3d4459; padding: 0 8px 0 10px; font-size: 11px; }
+    .mb-pane .CodeMirror-cursor { border-left-color: var(--accent) !important; }
+    .mb-pane .CodeMirror-scroll { overflow-x: auto !important; }
+
+    /* Block action bar */
+    .mb-block-actions {
+      display: flex; align-items: center; gap: 8px; padding: 8px 12px;
+      background: #13161e; border-top: 1px solid rgba(255,255,255,0.05);
+    }
+    .mb-block-status { flex: 1; font-size: 11.5px; color: var(--text-muted); font-family: var(--font-mono); }
+    .mb-block-actions button {
+      height: 26px; padding: 0 10px; border-radius: 5px;
+      font-size: 11.5px; font-weight: 600; cursor: pointer;
+      border: 1px solid transparent; transition: var(--transition);
+    }
+    .mb-preview-btn { background: rgba(99,179,237,0.1); border-color: rgba(99,179,237,0.25); color: var(--accent); }
+    .mb-preview-btn:hover { background: rgba(99,179,237,0.18); }
+    .mb-apply-btn { background: rgba(104,211,145,0.1); border-color: rgba(104,211,145,0.25); color: var(--success); }
+    .mb-apply-btn:hover { background: rgba(104,211,145,0.18); }
+    .mb-apply-btn:disabled { opacity: 0.35; pointer-events: none; }
+    .mb-copy-btn { background: rgba(255,255,255,0.05); border-color: rgba(255,255,255,0.08); color: var(--text-muted); }
+    .mb-copy-btn:hover { background: rgba(255,255,255,0.1); color: var(--text-primary); }
+
+    /* Diff mini-view in block body */
+    .mb-diff-row {
+      border-top: 1px solid rgba(255,255,255,0.04);
+      max-height: 200px; overflow: auto;
+      font-family: var(--font-mono); font-size: 11.5px; line-height: 1.65;
+      background: #0a0c10;
+    }
   </style>
 </head>
 <body>
@@ -777,6 +1078,21 @@
       <div class="nav-section-label">Edit</div>
       <div class="nav-item" data-page="edit" id="nav-edit">
         <span class="nav-icon">✏️</span> Code Edit
+      </div>
+
+      <div class="separator"></div>
+      <div class="nav-section-label">Analysis</div>
+      <div class="nav-item" data-page="index" id="nav-index">
+        <span class="nav-icon">📋</span> Index
+      </div>
+      <div class="nav-item" data-page="overview" id="nav-overview">
+        <span class="nav-icon">🗺</span> Overview
+      </div>
+      <div class="nav-item" data-page="call-graph" id="nav-call-graph">
+        <span class="nav-icon">🔗</span> Call Graph
+      </div>
+      <div class="nav-item" data-page="function-extract" id="nav-function-extract">
+        <span class="nav-icon">⚡</span> Function Extract
       </div>
 
       <div class="separator"></div>
@@ -879,49 +1195,78 @@
       <section class="page" id="page-edit">
         <div class="page-header">
           <div class="page-title">✏️ Code Edit</div>
-          <div class="search-row">
+          <div class="search-row" style="gap:10px">
             <div class="search-input-wrap" style="flex:2">
               <span class="search-icon">📄</span>
               <input id="edit-file" type="text" placeholder="Relative file path (e.g. codeengine/app.py)" />
             </div>
-          </div>
-        </div>
-        <div class="edit-grid">
-          <!-- Old code pane -->
-          <div class="edit-pane" id="pane-old">
-            <div class="pane-toolbar">
-              <span class="pane-label">Old Code (to replace)</span>
-              <span class="pane-lang-badge" id="old-lang-badge">Plain</span>
-              <button class="pane-copy-btn" id="old-copy-btn">⎘ Copy</button>
-            </div>
-            <textarea class="code-textarea" id="edit-old" placeholder="Paste the exact existing code block you want to replace…"></textarea>
-          </div>
-          <!-- New code pane -->
-          <div class="edit-pane" id="pane-new">
-            <div class="pane-toolbar">
-              <span class="pane-label">New Code (replacement)</span>
-              <span class="pane-lang-badge" id="new-lang-badge">Plain</span>
-              <button class="pane-copy-btn" id="new-copy-btn">⎘ Copy</button>
-            </div>
-            <textarea class="code-textarea" id="edit-new" placeholder="Paste your new replacement code…"></textarea>
-          </div>
-          <!-- Diff pane -->
-          <div class="edit-pane" style="grid-column:1/-1">
-            <div class="pane-toolbar">
-              <span class="pane-label">Unified Diff Preview</span>
-              <span class="pane-lang-badge" style="background:rgba(246,173,85,0.12);color:var(--warning);border-color:rgba(246,173,85,0.25);">DIFF</span>
-              <button class="pane-copy-btn" id="diff-copy-btn">⎘ Copy Diff</button>
-            </div>
-            <div class="diff-view" id="edit-diff">
-              <div class="diff-line diff-ctx"><span class="diff-gutter"></span><span class="diff-text" style="color:var(--text-muted);font-style:italic">Click "Preview" to see the diff before applying.</span></div>
+            <!-- Mode toggle -->
+            <div class="mode-toggle" id="edit-mode-toggle">
+              <button class="mode-btn active" id="mode-btn-single" data-mode="single">Single</button>
+              <button class="mode-btn" id="mode-btn-multi" data-mode="multi">Multi-Block</button>
             </div>
           </div>
         </div>
-        <div class="edit-actions">
-          <span id="edit-status">Ready</span>
-          <button class="btn btn-secondary" id="edit-preview-btn">👁 Preview</button>
-          <button class="btn btn-success" id="edit-apply-btn" disabled>✅ Apply Edit</button>
-          <button class="btn btn-danger" id="edit-undo-btn">↩ Undo Last</button>
+
+        <!-- ─── SINGLE MODE (original editor) ─── -->
+        <div id="single-edit-wrap" style="display:flex; flex-direction:column; flex:1; overflow:hidden;">
+          <div class="edit-grid">
+            <!-- Old code pane -->
+            <div class="edit-pane" id="pane-old">
+              <div class="pane-toolbar">
+                <span class="pane-label">Old Code (to replace)</span>
+                <span class="pane-lang-badge" id="old-lang-badge">Plain</span>
+                <button class="pane-copy-btn" id="old-copy-btn">⎘ Copy</button>
+              </div>
+              <textarea class="code-textarea" id="edit-old" placeholder="Paste the exact existing code block you want to replace…"></textarea>
+            </div>
+            <!-- New code pane -->
+            <div class="edit-pane" id="pane-new">
+              <div class="pane-toolbar">
+                <span class="pane-label">New Code (replacement)</span>
+                <span class="pane-lang-badge" id="new-lang-badge">Plain</span>
+                <button class="pane-copy-btn" id="new-copy-btn">⎘ Copy</button>
+              </div>
+              <textarea class="code-textarea" id="edit-new" placeholder="Paste your new replacement code…"></textarea>
+            </div>
+            <!-- Diff pane -->
+            <div class="edit-pane" style="grid-column:1/-1">
+              <div class="pane-toolbar">
+                <span class="pane-label">Unified Diff Preview</span>
+                <span class="pane-lang-badge" style="background:rgba(246,173,85,0.12);color:var(--warning);border-color:rgba(246,173,85,0.25);">DIFF</span>
+                <button class="pane-copy-btn" id="diff-copy-btn">⎘ Copy Diff</button>
+              </div>
+              <div class="diff-view" id="edit-diff">
+                <div class="diff-line diff-ctx"><span class="diff-gutter"></span><span class="diff-text" style="color:var(--text-muted);font-style:italic">Click "Preview" to see the diff before applying.</span></div>
+              </div>
+            </div>
+          </div>
+          <div class="edit-actions">
+            <span id="edit-status">Ready</span>
+            <button class="btn btn-secondary" id="edit-preview-btn">👁 Preview</button>
+            <button class="btn btn-success" id="edit-apply-btn" disabled>✅ Apply Edit</button>
+            <button class="btn btn-danger" id="edit-undo-btn">↩ Undo Last</button>
+          </div>
+        </div>
+
+        <!-- ─── MULTI-BLOCK MODE ─── -->
+        <div id="multi-block-area" style="display:none;">
+          <!-- Paste zone -->
+          <div id="mb-paste-zone">
+            <textarea id="mb-paste-input" placeholder="Paste new/updated code here (multiple functions, classes, imports…). Hit Parse to split into blocks."></textarea>
+            <button id="mb-parse-btn">⚡ Parse</button>
+          </div>
+
+          <!-- Status + apply-all -->
+          <div id="mb-status-bar" style="display:none">
+            <span>Blocks detected:</span>
+            <span class="mb-count" id="mb-block-count">0</span>
+            <span id="mb-status-msg"></span>
+            <button id="mb-apply-all-btn" disabled>✅ Apply All</button>
+          </div>
+
+          <!-- Stacked block windows -->
+          <div id="mb-blocks-stack"></div>
         </div>
       </section>
 
@@ -979,6 +1324,102 @@
         </div>
       </section>
 
+      <!-- ════ INDEX PAGE ════ -->
+      <section class="page" id="page-index">
+        <div class="page-header">
+          <div class="page-title">📋 File & Symbol Index</div>
+          <div class="search-row">
+            <div class="search-input-wrap">
+              <span class="search-icon">⌕</span>
+              <input id="idx-files" type="text" placeholder="Filter by files (comma-separated, optional)" />
+            </div>
+            <button class="btn btn-primary" id="idx-load-btn">Load Index</button>
+          </div>
+        </div>
+        <div class="results-area" id="idx-results">
+          <div class="empty-state">
+            <div class="empty-icon">📋</div>
+            <div class="empty-title">Repository Index</div>
+            <div class="empty-sub">Load the file and symbol index to see all indexed files and their symbols.</div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ════ OVERVIEW PAGE ════ -->
+      <section class="page" id="page-overview">
+        <div class="page-header">
+          <div class="page-title">🗺 Repository Overview</div>
+          <div class="search-row">
+            <div class="search-input-wrap">
+              <span class="search-icon">⌕</span>
+              <input id="ov-files" type="text" placeholder="Filter by files (comma-separated, optional)" />
+            </div>
+            <button class="btn btn-primary" id="ov-load-btn">Load Overview</button>
+          </div>
+        </div>
+        <div class="results-area" id="ov-results">
+          <div class="empty-state">
+            <div class="empty-icon">🗺</div>
+            <div class="empty-title">Call Graph Overview</div>
+            <div class="empty-sub">Load the repository overview to see call relationships between functions.</div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ════ CALL GRAPH PAGE ════ -->
+      <section class="page" id="page-call-graph">
+        <div class="page-header">
+          <div class="page-title">🔗 Call Graph</div>
+          <div class="search-row">
+            <div class="search-input-wrap">
+              <span class="search-icon">⌕</span>
+              <input id="cg-symbol" type="text" placeholder="Symbol name (e.g. normalize_layout)" />
+            </div>
+            <button class="btn btn-primary" id="cg-callers-btn">Who Calls This?</button>
+            <button class="btn btn-secondary" id="cg-callees-btn">What Does This Call?</button>
+          </div>
+        </div>
+        <div class="results-area" id="cg-results">
+          <div class="empty-state">
+            <div class="empty-icon">🔗</div>
+            <div class="empty-title">Call Relationships</div>
+            <div class="empty-sub">Enter a symbol name to see who calls it or what it calls.</div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ════ FUNCTION EXTRACT PAGE ════ -->
+      <section class="page" id="page-function-extract">
+        <div class="page-header">
+          <div class="page-title">⚡ Function Extract</div>
+          <div class="search-row">
+            <div class="search-input-wrap" style="flex:2">
+              <span class="search-icon">📄</span>
+              <input id="fe-file" type="text" placeholder="Relative file path (e.g. codeengine/app.py)" />
+            </div>
+            <div class="search-input-wrap">
+              <span class="search-icon">📍</span>
+              <input id="fe-line-start" type="number" placeholder="Line start" style="width:80px" />
+            </div>
+            <div class="search-input-wrap">
+              <span class="search-icon">📍</span>
+              <input id="fe-line-end" type="number" placeholder="Line end" style="width:80px" />
+            </div>
+          </div>
+          <div class="search-row" style="margin-top:8px">
+            <button class="btn btn-primary" id="fe-signature-btn">Get Signature Only</button>
+            <button class="btn btn-secondary" id="fe-body-btn">Get Full Body</button>
+          </div>
+        </div>
+        <div class="results-area" id="fe-results">
+          <div class="empty-state">
+            <div class="empty-icon">⚡</div>
+            <div class="empty-title">Function Extraction</div>
+            <div class="empty-sub">Enter file path and line range to extract function signature or body.</div>
+          </div>
+        </div>
+      </section>
+
     </main><!-- /main -->
   </div><!-- /body -->
 </div><!-- /app -->
@@ -1005,682 +1446,43 @@
 <!-- Toast notifications -->
 <div id="toast-container"></div>
 
-<script>
-/* ═══════════════════════════════════════════════════════════
-   UTILITIES
-═══════════════════════════════════════════════════════════ */
-const BASE = 'http://127.0.0.1:8000';
-
-async function api(path, opts = {}) {
-  const r = await fetch(BASE + path, {
-    headers: { 'Content-Type': 'application/json' },
-    ...opts,
-  });
-  if (!r.ok) {
-    const err = await r.json().catch(() => ({ detail: r.statusText }));
-    throw new Error(err.detail || r.statusText);
-  }
-  return r.json();
-}
-
-function toast(msg, type = 'info') {
-  const el = document.createElement('div');
-  el.className = `toast ${type}`;
-  el.textContent = msg;
-  document.getElementById('toast-container').appendChild(el);
-  setTimeout(() => el.remove(), 3200);
-}
-
-function loading(container) {
-  container.innerHTML = `<div class="empty-state"><div class="spinner"></div><div class="empty-sub">Loading…</div></div>`;
-}
-
-function empty(container, icon, title, sub) {
-  container.innerHTML = `<div class="empty-state">
-    <div class="empty-icon">${icon}</div>
-    <div class="empty-title">${title}</div>
-    <div class="empty-sub">${sub}</div>
-  </div>`;
-}
-
-function escHtml(s) {
-  return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
-}
-
-function getRepo() {
-  return document.getElementById('repo-path').value.trim() || '.';
-}
-
-/* ═══════════════════════════════════════════════════════════
-   NAV / PAGE ROUTING
-═══════════════════════════════════════════════════════════ */
-function navigateToPage(pageName) {
-  document.querySelectorAll('.nav-item').forEach(i => i.classList.remove('active'));
-  document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
-  
-  const navItem = document.querySelector(`.nav-item[data-page="${pageName}"]`);
-  if (navItem) navItem.classList.add('active');
-  
-  const pageId = 'page-' + pageName;
-  document.getElementById(pageId)?.classList.add('active');
-  closeCodePanel();
-}
-
-document.querySelectorAll('.nav-item').forEach(item => {
-  item.addEventListener('click', () => {
-    navigateToPage(item.dataset.page);
-  });
-});
-
-/* ═══════════════════════════════════════════════════════════
-   CODE PANEL (slide-in)
-═══════════════════════════════════════════════════════════ */
-const codePanel = document.getElementById('code-panel');
-let _currentPanelSource = '';
-
-const LANG_LABELS = {
-  python:'Python', javascript:'JavaScript', typescript:'TypeScript',
-  java:'Java', go:'Go', rust:'Rust',
-  html:'HTML', css:'CSS', json:'JSON', markdown:'Markdown', plaintext:'Plain Text'
-};
-
-function openCodePanel(title, source, lang = 'plaintext') {
-  _currentPanelSource = source;
-
-  // Title
-  document.getElementById('code-panel-title').textContent = title;
-
-  // Toolbar — language badge
-  const badge = document.getElementById('cp-lang-badge');
-  badge.textContent = LANG_LABELS[lang] || lang;
-
-  // Toolbar — line count
-  const lineCount = (source.match(/\n/g) || []).length + 1;
-  document.getElementById('cp-line-count').textContent = `${lineCount} line${lineCount !== 1 ? 's' : ''}`;
-
-  // Highlight
-  const el = document.getElementById('code-panel-content');
-  el.className = `language-${lang}`;
-  el.textContent = source;
-  hljs.highlightElement(el);
-
-  // Line numbers (plugin)
-  if (typeof hljs.lineNumbersBlock === 'function') {
-    hljs.lineNumbersBlock(el);
-  }
-
-  // Open panel
-  codePanel.classList.add('open');
-}
-
-function closeCodePanel() {
-  codePanel.classList.remove('open');
-}
-
-document.getElementById('code-panel-close').addEventListener('click', closeCodePanel);
-
-// Copy button
-document.getElementById('cp-copy-btn').addEventListener('click', () => {
-  if (!_currentPanelSource) return;
-  navigator.clipboard.writeText(_currentPanelSource).then(() => {
-    const btn = document.getElementById('cp-copy-btn');
-    btn.textContent = '✓ Copied';
-    btn.classList.add('copied');
-    setTimeout(() => { btn.textContent = '⎘ Copy'; btn.classList.remove('copied'); }, 1800);
-  }).catch(() => toast('Copy failed', 'error'));
-});
-
-function detectLang(filePath) {
-  const ext = (filePath || '').split('.').pop().toLowerCase();
-  const map = { py:'python', js:'javascript', ts:'typescript',
-                java:'java', go:'go', rs:'rust',
-                html:'html', css:'css', json:'json', md:'markdown' };
-  return map[ext] || 'plaintext';
-}
-
-/* ═══════════════════════════════════════════════════════════
-   CODE SEARCH
-═══════════════════════════════════════════════════════════ */
-const csResults = document.getElementById('cs-results');
-
-document.getElementById('cs-search-btn').addEventListener('click', runCodeSearch);
-document.getElementById('cs-query').addEventListener('keydown', e => {
-  if (e.key === 'Enter' && !e.shiftKey) {
-    e.preventDefault();
-    runCodeSearch();
-  }
-});
-
-async function runCodeSearch() {
-  let q = document.getElementById('cs-query').value;
-  // Trim only leading newlines and trailing whitespace to preserve indentation on the first line
-  q = q.replace(/^[\r\n]+/, '').replace(/[\s\r\n]+$/, '');
-  const lang  = document.getElementById('cs-lang').value;
-  const limit = document.getElementById('cs-limit').value || 50;
-  if (!q) { toast('Enter a search query', 'error'); return; }
-
-  loading(csResults);
-  try {
-    const params = new URLSearchParams({ q, path: getRepo(), limit });
-    if (lang) params.append('lang', lang);
-    const data = await api(`/search/code?${params}`);
-
-    if (!data.matches.length) {
-      empty(csResults, '🔍', 'No matches found', `No results for "${escHtml(q)}" in this repo.`);
-      return;
-    }
-
-    let html = `<div class="stats-bar"><span class="stats-badge">⚡ ${data.total} match${data.total!==1?'es':''}</span> for <code style="white-space: pre-wrap; font-family: var(--font-mono); background: var(--bg-elevated); padding: 2px 6px; border-radius: 4px;">"${escHtml(q)}"</code></div>`;
-    data.matches.forEach(m => {
-      const normalizedText = m.text.replace(/\r\n/g, '\n');
-      const normalizedQ = q.replace(/\r\n/g, '\n');
-      const highlighted = escHtml(normalizedText).replace(
-        new RegExp(escHtml(normalizedQ).replace(/[.*+?^${}()|[\]\\]/g,'\\$&'), 'gi'),
-        s => `<span class="match-highlight">${s}</span>`
-      );
-      html += `
-        <div class="match-card" onclick="loadFunctionContext('${escHtml(m.file)}',${m.line})">
-          <div class="match-header">
-            <span class="file-icon">📄</span>
-            <span class="file-path">${escHtml(m.file)}</span>
-            <span class="line-badge">L${m.line}:${m.col}</span>
-          </div>
-          <div class="match-body">
-            <div class="match-code">${highlighted}</div>
-          </div>
-        </div>`;
-    });
-    csResults.innerHTML = html;
-  } catch(e) {
-    empty(csResults, '⚠️', 'Search failed', e.message);
-    toast('Search error: ' + e.message, 'error');
-  }
-}
-
-async function loadFunctionContext(file, line) {
-  try {
-    const source = await fetchFileSnippet(file);
-    openCodePanel(file, source, detectLang(file));
-  } catch(e) {
-    toast('Cannot preview: ' + e.message, 'error');
-  }
-}
-
-async function fetchFileSnippet(file) {
-  const data = await api(`/search/file-read?${new URLSearchParams({ file })}`);
-  return data.content;
-}
-
-/* ═══════════════════════════════════════════════════════════
-   SYMBOL SEARCH
-═══════════════════════════════════════════════════════════ */
-const ssResults = document.getElementById('ss-results');
-
-document.getElementById('ss-search-btn').addEventListener('click', runSymbolSearch);
-document.getElementById('ss-name').addEventListener('keydown', e => { if(e.key==='Enter') runSymbolSearch(); });
-
-async function runSymbolSearch() {
-  let name = document.getElementById('ss-name').value.trim();
-  const kind = document.getElementById('ss-kind').value;
-  if (!name) { toast('Enter a symbol name', 'error'); return; }
-
-  // Strip: "def normalize_layout(items):" → "normalize_layout"
-  name = name
-    .replace(/^(async\s+def|def|class)\s+/, '')
-    .replace(/\s*\(.*/, '')
-    .replace(/:$/, '')
-    .trim();
-
-  loading(ssResults);
-  try {
-    const params = new URLSearchParams({ name });
-    if (kind) params.append('kind', kind);
-    const data = await api(`/search/symbol?${params}`);
-
-    if (!data.length) {
-      // Fallback: search using code search API
-      const fallbackQuery = (kind === 'class') ? `class ${name}` : `def ${name}`;
-      const codeParams = new URLSearchParams({ q: fallbackQuery, path: getRepo(), limit: 50 });
-      const fallbackData = await api(`/search/code?${codeParams}`);
-      
-      if (!fallbackData.matches || !fallbackData.matches.length) {
-        empty(ssResults, '🔣', 'No symbols found', `No symbols or code matches matching "${escHtml(name)}".`);
-        return;
-      }
-
-      let html = `
-        <div class="stats-bar" style="margin-bottom: 16px;">
-          <span class="stats-badge" style="background: rgba(246,173,85,0.18); color: var(--warning); border-color: rgba(246,173,85,0.35);">⚠️ Fallback</span>
-          <span>Symbols not yet indexed — showing code matches for <b>"${escHtml(fallbackQuery)}"</b></span>
-        </div>`;
-      fallbackData.matches.forEach(m => {
-        html += `
-          <div class="match-card" onclick="loadFunctionContext('${escHtml(m.file)}',${m.line})">
-            <div class="match-header">
-              <span class="file-icon">📄</span>
-              <span class="file-path">${escHtml(m.file)}</span>
-              <span class="line-badge">L${m.line}:${m.col}</span>
-            </div>
-            <div class="match-body">
-              <div class="match-code">${escHtml(m.text)}</div>
-            </div>
-          </div>`;
-      });
-      ssResults.innerHTML = html;
-      return;
-    }
-
-    let html = `<div class="stats-bar"><span class="stats-badge">🔣 ${data.length} symbol${data.length!==1?'s':''}</span></div>`;
-    data.forEach(s => {
-      const kindClass = { function:'kind-function', class:'kind-class', method:'kind-method', interface:'kind-interface' }[s.kind] || 'kind-default';
-      html += `
-        <div class="symbol-card" onclick="loadSymbolSource('${escHtml(s.file)}','${escHtml(s.name)}','${escHtml(s.kind)}')">
-          <span class="symbol-kind ${kindClass}">${s.kind}</span>
-          <span class="symbol-name">${escHtml(s.name)}</span>
-          <span class="symbol-file">${escHtml(s.file)}</span>
-          <span class="symbol-lines">L${s.line_start}–${s.line_end}</span>
-        </div>`;
-    });
-    ssResults.innerHTML = html;
-  } catch(e) {
-    empty(ssResults, '⚠️', 'Search failed', e.message);
-    toast('Error: ' + e.message, 'error');
-  }
-}
-
-async function loadSymbolSource(file, name, kind) {
-  try {
-    let data;
-    if (kind === 'class') {
-      data = await api(`/search/class?${new URLSearchParams({file,name})}`);
-    } else {
-      data = await api(`/search/function?${new URLSearchParams({file,name})}`);
-    }
-    
-    // Autofill Code Editor fields
-    const filePath = data.file || file;
-    document.getElementById('edit-file').value = filePath;
-    const ext = filePath.split('.').pop().toLowerCase();
-    setEditorLang(ext);
-    cmOld.setValue(data.source);
-    cmNew.setValue(data.source);
-
-    // Switch to Code Editor page
-    navigateToPage('edit');
-    // Refresh CM layout after becoming visible
-    setTimeout(() => { cmOld.refresh(); cmNew.refresh(); }, 50);
-
-    toast(`Loaded ${name} into Code Editor`, 'success');
-  } catch(e) {
-    toast('Cannot load source: ' + e.message, 'error');
-  }
-}
-
-/* ═══════════════════════════════════════════════════════════
-   FILE FINDER
-═══════════════════════════════════════════════════════════ */
-const ffResults = document.getElementById('ff-results');
-
-document.getElementById('ff-search-btn').addEventListener('click', runFileFinder);
-document.getElementById('ff-pattern').addEventListener('keydown', e => { if(e.key==='Enter') runFileFinder(); });
-
-async function runFileFinder() {
-  const pattern = document.getElementById('ff-pattern').value.trim();
-  loading(ffResults);
-  try {
-    const params = new URLSearchParams({ pattern, root: getRepo() });
-    const data   = await api(`/search/file?${params}`);
-
-    if (!data.length) {
-      empty(ffResults, '📂', 'No files found', `No files matching "${escHtml(pattern)}".`);
-      return;
-    }
-
-    const ICONS = { py:'🐍', js:'🟨', ts:'🔷', java:'☕', go:'🐹', rs:'🦀', html:'🌐', css:'🎨', json:'📋', md:'📝' };
-    let html = `<div class="stats-bar"><span class="stats-badge">📂 ${data.length} file${data.length!==1?'s':''}</span></div>`;
-    data.forEach(f => {
-      const ext  = f.split('.').pop().toLowerCase();
-      const icon = ICONS[ext] || '📄';
-      html += `<div class="file-item" onclick="loadFunctionContext('${escHtml(f)}', 1)">${icon} ${escHtml(f)}</div>`;
-    });
-    ffResults.innerHTML = html;
-  } catch(e) {
-    empty(ffResults, '⚠️', 'Search failed', e.message);
-    toast('Error: ' + e.message, 'error');
-  }
-}
-
-function copyToClipboard(text) {
-  navigator.clipboard.writeText(text).then(() => toast('Copied: ' + text, 'info'));
-}
-
-/* ═══════════════════════════════════════════════════════════
-   EDIT — CodeMirror editors
-═══════════════════════════════════════════════════════════ */
-let currentEditId = null;
-let _lastDiffText = '';
-
-const editStatus  = document.getElementById('edit-status');
-const editApplyBtn = document.getElementById('edit-apply-btn');
-const editDiff    = document.getElementById('edit-diff');
-
-/* ── CM mode map ── */
-const EXT_TO_CM_MODE = {
-  py: 'python', js: 'javascript', ts: { name: 'javascript', typescript: true },
-  java: 'text/x-java', go: 'go', rs: 'rust',
-  html: 'htmlmixed', css: 'css', json: 'application/json'
-};
-const EXT_TO_LABEL = {
-  py:'Python', js:'JavaScript', ts:'TypeScript',
-  java:'Java', go:'Go', rs:'Rust',
-  html:'HTML', css:'CSS', json:'JSON'
-};
-
-const CM_OPTS = {
-  theme: 'dracula',
-  lineNumbers: true,
-  indentUnit: 4,
-  tabSize: 4,
-  indentWithTabs: false,
-  lineWrapping: false,
-  autofocus: false,
-  extraKeys: { Tab: cm => cm.execCommand('insertSoftTab') },
-  styleActiveLine: true,
-};
-
-/* Initialise both editors */
-const cmOld = CodeMirror.fromTextArea(document.getElementById('edit-old'), { ...CM_OPTS, mode: 'plaintext' });
-const cmNew = CodeMirror.fromTextArea(document.getElementById('edit-new'), { ...CM_OPTS, mode: 'plaintext' });
-
-/* Make editors fill pane height */
-cmOld.setSize('100%', '100%');
-cmNew.setSize('100%', '100%');
-
-function setEditorLang(ext) {
-  const mode  = EXT_TO_CM_MODE[ext] || 'plaintext';
-  const label = EXT_TO_LABEL[ext]   || 'Plain';
-  cmOld.setOption('mode', mode);
-  cmNew.setOption('mode', mode);
-  document.getElementById('old-lang-badge').textContent = label;
-  document.getElementById('new-lang-badge').textContent = label;
-}
-
-/* Watch file path input → update editor language */
-document.getElementById('edit-file').addEventListener('input', () => {
-  const file = document.getElementById('edit-file').value.trim();
-  const ext  = file.split('.').pop().toLowerCase();
-  setEditorLang(ext);
-});
-
-/* ── Copy buttons ── */
-function makeCopyBtn(btnId, getContent) {
-  document.getElementById(btnId).addEventListener('click', () => {
-    const text = getContent();
-    if (!text) return;
-    navigator.clipboard.writeText(text).then(() => {
-      const btn = document.getElementById(btnId);
-      btn.textContent = '✓ Copied';
-      btn.classList.add('copied');
-      setTimeout(() => { btn.textContent = '⎘ Copy'; btn.classList.remove('copied'); }, 1800);
-    }).catch(() => toast('Copy failed', 'error'));
-  });
-}
-makeCopyBtn('old-copy-btn', () => cmOld.getValue());
-makeCopyBtn('new-copy-btn', () => cmNew.getValue());
-makeCopyBtn('diff-copy-btn', () => _lastDiffText);
-
-/* ── Preview ── */
-document.getElementById('edit-preview-btn').addEventListener('click', async () => {
-  const file     = document.getElementById('edit-file').value.trim();
-  const old_code = cmOld.getValue();
-  const new_code = cmNew.getValue();
-  if (!file || !old_code || !new_code) { toast('Fill in all three fields', 'error'); return; }
-
-  editStatus.textContent = 'Generating preview…';
-  editApplyBtn.disabled = true;
-  currentEditId = null;
-
-  try {
-    const data = await api('/preview-edit', {
-      method: 'POST',
-      body: JSON.stringify({ file, old_code, new_code }),
-    });
-    currentEditId  = data.edit_id;
-    _lastDiffText  = data.diff || '';
-
-    // Render coloured diff with gutter line numbers
-    const lines = _lastDiffText.split('\n');
-    let addN = 0, delN = 0, ctxN = 0;
-    editDiff.innerHTML = lines.map((l, i) => {
-      const lineNum = i + 1;
-      if (l.startsWith('+++') || l.startsWith('---') || l.startsWith('@@')) {
-        return `<div class="diff-line diff-hdr"><span class="diff-gutter">${lineNum}</span><span class="diff-text">${escHtml(l)}</span></div>`;
-      }
-      if (l.startsWith('+')) {
-        return `<div class="diff-line diff-add"><span class="diff-gutter">+${lineNum}</span><span class="diff-text">${escHtml(l.slice(1))}</span></div>`;
-      }
-      if (l.startsWith('-')) {
-        return `<div class="diff-line diff-del"><span class="diff-gutter">-${lineNum}</span><span class="diff-text">${escHtml(l.slice(1))}</span></div>`;
-      }
-      return `<div class="diff-line diff-ctx"><span class="diff-gutter">${lineNum}</span><span class="diff-text">${escHtml(l)}</span></div>`;
-    }).join('');
-
-    editStatus.textContent = `edit_id: ${currentEditId} — ready to apply`;
-    editApplyBtn.disabled = false;
-    toast('Preview ready', 'success');
-  } catch(e) {
-    editDiff.innerHTML = `<div class="diff-line diff-del"><span class="diff-gutter">!</span><span class="diff-text">${escHtml(e.message)}</span></div>`;
-    editStatus.textContent = 'Preview failed';
-    toast('Preview error: ' + e.message, 'error');
-  }
-});
-
-/* ── Apply ── */
-editApplyBtn.addEventListener('click', async () => {
-  if (!currentEditId) return;
-  editStatus.textContent = 'Applying edit…';
-  editApplyBtn.disabled = true;
-  try {
-    const data = await api('/apply-edit', {
-      method: 'POST',
-      body: JSON.stringify({ edit_id: currentEditId }),
-    });
-    editStatus.textContent = `Applied — commit: ${data.commit_sha || 'ok'}`;
-    currentEditId = null;
-    toast('Edit applied and committed ✅', 'success');
-  } catch(e) {
-    editStatus.textContent = 'Apply failed: ' + e.message;
-    toast('Apply error: ' + e.message, 'error');
-  }
-});
-
-/* ── Undo ── */
-document.getElementById('edit-undo-btn').addEventListener('click', async () => {
-  editStatus.textContent = 'Reverting last edit…';
-  try {
-    const data = await api('/undo', { method: 'POST' });
-    editStatus.textContent = `Reverted — commit: ${data.revert_sha || 'ok'}`;
-    toast('Last edit reverted ↩', 'info');
-  } catch(e) {
-    editStatus.textContent = 'Undo failed: ' + e.message;
-    toast('Undo error: ' + e.message, 'error');
-  }
-});
-
-/* ── Auto-detect file path on paste into Old Code ── */
-cmOld.on('change', (cm, change) => {
-  if (change.origin !== 'paste') return;
-  setTimeout(async () => {
-    const code = cm.getValue().replace(/^[\r\n]+/, '').replace(/[\s\r\n]+$/, '');
-    if (!code) return;
-    try {
-      const params = new URLSearchParams({ q: code, path: getRepo(), limit: 1 });
-      const data = await api(`/search/code?${params}`);
-      if (data.matches && data.matches.length > 0) {
-        const file = data.matches[0].file;
-        document.getElementById('edit-file').value = file;
-        setEditorLang(file.split('.').pop().toLowerCase());
-        toast(`Auto-filled file path: ${file}`, 'success');
-      }
-    } catch (err) { /* silent */ }
-  }, 50);
-});
-
-/* ── Auto-detect file and old code on paste into New Code ── */
-cmNew.on('change', (cm, change) => {
-  if (change.origin !== 'paste') return;
-  setTimeout(async () => {
-    const code = cm.getValue();
-    if (!code || code.trim().length < 10) return;
-    
-    const hintFile = document.getElementById('edit-file').value.trim();
-    
-    try {
-      const data = await api('/search/detect-original', {
-        method: 'POST',
-        body: JSON.stringify({
-          code: code,
-          file_path_hint: hintFile || null
-        })
-      });
-      
-      if (data.found) {
-        document.getElementById('edit-file').value = data.file;
-        const ext = data.file.split('.').pop().toLowerCase();
-        setEditorLang(ext);
-        cmOld.setValue(data.source);
-        toast(`Auto-detected original function in ${data.file} and populated Old Code!`, 'success');
-      } else {
-        // Fallback: If AST symbol mapping fails, check exact match via code search
-        const cleanCode = code.replace(/^[\r\n]+/, '').replace(/[\s\r\n]+$/, '');
-        const params = new URLSearchParams({ q: cleanCode, path: getRepo(), limit: 1 });
-        const codeSearchRes = await api(`/search/code?${params}`);
-        if (codeSearchRes.matches && codeSearchRes.matches.length > 0) {
-          const file = codeSearchRes.matches[0].file;
-          document.getElementById('edit-file').value = file;
-          setEditorLang(file.split('.').pop().toLowerCase());
-          
-          const fullFileObj = await api(`/search/file-read?${new URLSearchParams({ file })}`);
-          cmOld.setValue(fullFileObj.content);
-          toast(`Matched exact file code in ${file} and populated Old Code!`, 'success');
-        }
-      }
-    } catch (err) {
-      console.warn("Auto-detect failed:", err);
-    }
-  }, 50);
-});
-
-/* ═══════════════════════════════════════════════════════════
-   BUILD / TEST / LINT
-═══════════════════════════════════════════════════════════ */
-const buildOutput = document.getElementById('build-output');
-
-function setBuildOutput(label, data) {
-  const ok    = data.exit_code === 0;
-  const color = ok ? 'out-ok' : 'out-err';
-  buildOutput.innerHTML =
-    `<span class="out-label">▶ ${label}</span>\n` +
-    `<span class="${color}">Exit code: ${data.exit_code}</span>\n\n` +
-    (data.stdout ? escHtml(data.stdout) + '\n' : '') +
-    (data.stderr ? `<span class="out-err">${escHtml(data.stderr)}</span>\n` : '');
-  if (ok) toast(`${label} succeeded ✅`, 'success');
-  else     toast(`${label} finished with errors`, 'error');
-}
-
-async function runWorker(action, langId) {
-  const lang      = document.getElementById(langId).value;
-  const repo_path = getRepo();
-  buildOutput.innerHTML = `<span class="out-label">▶ Running ${action}…</span>\n`;
-  try {
-    const data = await api(`/${action}`, {
-      method: 'POST',
-      body: JSON.stringify({ lang, repo_path }),
-    });
-    setBuildOutput(action, data);
-  } catch(e) {
-    buildOutput.innerHTML += `<span class="out-err">Error: ${escHtml(e.message)}</span>`;
-    toast(`${action} error: ` + e.message, 'error');
-  }
-}
-
-document.getElementById('build-run-btn').addEventListener('click', () => runWorker('build', 'build-lang-build'));
-document.getElementById('test-run-btn').addEventListener('click', () => runWorker('test',  'build-lang-test'));
-document.getElementById('lint-run-btn').addEventListener('click', () => runWorker('lint',  'build-lang-lint'));
-
-/* ═══════════════════════════════════════════════════════════
-   FOLDER PICKER
-═══════════════════════════════════════════════════════════ */
-document.getElementById('browse-btn').addEventListener('click', async () => {
-  const current = document.getElementById('repo-path').value.trim();
-
-  if (window.pywebview) {
-    // Running inside pywebview native window — use native OS folder dialog
-    const chosen = await window.pywebview.api.pick_folder(current);
-    if (chosen) {
-      document.getElementById('repo-path').value = chosen;
-      toast('Repo set: ' + chosen, 'success');
-      await triggerReindex(chosen);
-    }
-  } else {
-    // Fallback for plain browser: simple prompt
-    const input = prompt('Enter repository path:', current || '.');
-    if (input !== null && input.trim()) {
-      const chosen = input.trim();
-      document.getElementById('repo-path').value = chosen;
-      toast('Repo set: ' + chosen, 'success');
-      await triggerReindex(chosen);
-    }
-  }
-});
-
-/* ═══════════════════════════════════════════════════════════
-   SERVER STATUS PING
-═══════════════════════════════════════════════════════════ */
-let isIndexing = false;
-const statusDot = document.getElementById('status-dot');
-
-async function triggerReindex(path) {
-  if (isIndexing) return;
-  isIndexing = true;
-  statusDot.className = 'indexing';
-  statusDot.title = 'Indexing...';
-  toast(`Indexing ${path}…`, 'info');
-  try {
-    const data = await api('/reindex', {
-      method: 'POST',
-      body: JSON.stringify({ repo_path: path })
-    });
-    statusDot.className = '';
-    statusDot.title = 'Server ready';
-    toast(`Indexed ${data.indexed} symbols ✅`, 'success');
-  } catch(e) {
-    statusDot.className = 'error';
-    toast('Reindex failed: ' + e.message, 'error');
-  } finally {
-    isIndexing = false;
-  }
-}
-
-document.getElementById('repo-path').addEventListener('keydown', e => {
-  if (e.key === 'Enter') {
-    triggerReindex(getRepo());
-  }
-});
-
-async function checkServer() {
-  if (isIndexing) return;
-  try {
-    await fetch(BASE + '/docs');
-    statusDot.className = '';
-    statusDot.title = 'Server ready';
-  } catch {
-    statusDot.className = 'error';
-    statusDot.title = 'Server unreachable';
-  }
-}
-checkServer();
-setInterval(checkServer, 10_000);
-</script>
+<!-- Resizable Terminal Container -->
+<div id="terminal-container">
+  <!-- TOOLBAR -->
+  <div class="term-toolbar">
+    <span class="term-toolbar-label">TERMINALS</span>
+    <div class="term-toggle-group">
+      <button class="term-toggle active" id="term-btn-index" data-target="index">⚡ Index</button>
+      <button class="term-toggle" id="term-btn-fastapi" data-target="fastapi">🚀 FastAPI</button>
+      <button class="term-toggle" id="term-btn-both" data-target="both">Both</button>
+    </div>
+    <div style="flex:1"></div>
+    <div class="idx-close" id="term-close-all" title="Close terminals">✕</div>
+  </div>
+
+  <!-- INDEXING Terminal (top) -->
+  <div class="term-panel" id="index-panel" style="flex: 1;">
+    <div class="term-panel-header">
+      <span class="idx-title">⚡ INDEXING</span>
+      <span class="idx-stats" id="idx-stats-text"></span>
+    </div>
+    <div class="term-progress-bar-wrap"><div class="term-progress-bar" id="index-progress-bar"></div></div>
+    <div class="term-log" id="index-log"></div>
+  </div>
+
+  <!-- RESIZE DIVIDER -->
+  <div class="term-divider" id="term-divider"></div>
+
+  <!-- FASTAPI Terminal (bottom) -->
+  <div class="term-panel" id="fastapi-panel" style="flex: 1;">
+    <div class="term-panel-header">
+      <span class="idx-title fastapi-title">🚀 FASTAPI SERVER</span>
+      <span class="idx-stats" id="fastapi-stats-text">Connecting…</span>
+    </div>
+    <div class="term-log" id="fastapi-log"></div>
+  </div>
+</div>
+
+<script src="static/static.js"></script>
 </body>
 </html>

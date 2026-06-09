@@ -238,6 +238,197 @@ def parse_code_string(source_code: str, file_path_hint: str | None = None, lang_
     walk(tree.root_node)
     return symbols
 
+# Per-language node type categories for the block-level editor
+BLOCK_FUNCTION_TYPES = {
+    "python":     {"function_definition", "decorated_definition"},
+    "javascript": {"function_declaration", "generator_function_declaration",
+                   "lexical_declaration", "variable_declaration"},  # for const/let fn
+    "typescript": {"function_declaration", "generator_function_declaration",
+                   "lexical_declaration", "variable_declaration",
+                   "ambient_declaration"},
+    "java":       {"method_declaration", "constructor_declaration"},
+    "go":         {"function_declaration", "method_declaration"},
+    "rust":       {"function_item"},
+}
+BLOCK_CLASS_TYPES = {
+    "python":     {"class_definition"},
+    "javascript": {"class_declaration"},
+    "typescript": {"class_declaration", "abstract_class_declaration"},
+    "java":       {"class_declaration", "interface_declaration", "enum_declaration"},
+    "go":         {"type_declaration"},
+    "rust":       {"struct_item", "impl_item", "trait_item", "enum_item"},
+}
+BLOCK_IMPORT_TYPES = {
+    "python":     {"import_statement", "import_from_statement"},
+    "javascript": {"import_statement"},
+    "typescript": {"import_statement"},
+    "java":       {"import_declaration"},
+    "go":         {"import_declaration"},
+    "rust":       {"use_declaration"},
+}
+
+def _is_constant_node(node, lang: str) -> bool:
+    """Return True if the node looks like a module-level constant."""
+    if lang == "python":
+        # assignment where the first target name is ALL_CAPS
+        if node.type == "expression_statement":
+            inner = node.children[0] if node.children else None
+            if inner and inner.type == "assignment":
+                left = inner.child_by_field_name("left")
+                if left and left.text:
+                    name = left.text.decode(errors="replace").strip()
+                    return name.isupper() and name.isidentifier()
+        if node.type == "assignment":
+            left = node.child_by_field_name("left")
+            if left and left.text:
+                name = left.text.decode(errors="replace").strip()
+                return name.isupper() and name.isidentifier()
+    # JS/TS: const UPPER = ...
+    if lang in ("javascript", "typescript"):
+        if node.type in ("lexical_declaration", "variable_declaration"):
+            for child in node.children:
+                if child.type == "variable_declarator":
+                    vname = child.child_by_field_name("name")
+                    if vname and vname.text:
+                        n = vname.text.decode(errors="replace").strip()
+                        if n.isupper() and n.isidentifier():
+                            return True
+    return False
+
+def _node_top_name(node, lang: str) -> str | None:
+    """Extract a best-effort name for a top-level node."""
+    # Try tree-sitter field 'name'
+    name_node = node.child_by_field_name("name")
+    if name_node and name_node.text:
+        return name_node.text.decode(errors="replace").strip()
+    # JS/TS lexical_declaration: const foo = () => ...
+    if lang in ("javascript", "typescript"):
+        for child in node.children:
+            if child.type == "variable_declarator":
+                vn = child.child_by_field_name("name")
+                if vn:
+                    return vn.text.decode(errors="replace").strip()
+    # Go type_declaration → first type_spec
+    if node.type == "type_declaration":
+        for child in node.children:
+            if child.type == "type_spec":
+                vn = child.child_by_field_name("name")
+                if vn:
+                    return vn.text.decode(errors="replace").strip()
+    # Rust impl_item: impl TypeName
+    if node.type == "impl_item":
+        type_node = node.child_by_field_name("type")
+        if type_node:
+            return type_node.text.decode(errors="replace").strip()
+    # Python expression_statement wrapping an assignment (e.g. MAX = 100)
+    if node.type == "expression_statement" and node.children:
+        inner = node.children[0]
+        if inner.type == "assignment":
+            left = inner.child_by_field_name("left")
+            if left and left.text:
+                return left.text.decode(errors="replace").strip()
+    return None
+
+def parse_blocks_from_code(
+    source_code: str,
+    file_path_hint: str | None = None,
+    lang_hint: str | None = None,
+) -> list[tuple[str, str | None, str]]:
+    """
+    Parse top-level code blocks from a multi-block source string.
+
+    Supports Python, JavaScript, TypeScript, Java, Go, Rust via tree-sitter.
+    Falls back gracefully to the Python ast module for Python when tree-sitter
+    parsing yields no useful blocks.
+
+    Returns:
+        list of (kind, name, source_text) tuples where kind is one of:
+        "function" | "class" | "import" | "constant" | "other"
+    """
+    # Detect language
+    lang = lang_hint
+    if not lang and file_path_hint:
+        lang = detect_language(file_path_hint)
+    if not lang:
+        src = source_code.encode("utf-8", errors="replace")
+        if b"fn " in src and (b"impl " in src or b"pub " in src):
+            lang = "rust"
+        elif b"func " in src:
+            lang = "go"
+        elif b"def " in src or (b"import " in src and b":" in src):
+            lang = "python"
+        elif b"class " in src and (b"public " in src or b"private " in src or b"void " in src):
+            lang = "java"
+        elif b"const " in src or b"let " in src or b"function " in src or b"=>" in src:
+            lang = "javascript"
+        else:
+            lang = "python"
+
+    if lang not in PARSERS:
+        lang = "python"
+
+    source_bytes = source_code.encode("utf-8", errors="replace")
+    parser = PARSERS[lang]
+    local_parser = Parser(parser.language)
+    tree = local_parser.parse(source_bytes)
+
+    lines = source_code.splitlines(keepends=True)
+    blocks: list[tuple[str, str | None, str]] = []
+
+    fn_types  = BLOCK_FUNCTION_TYPES.get(lang, set())
+    cls_types = BLOCK_CLASS_TYPES.get(lang, set())
+    imp_types = BLOCK_IMPORT_TYPES.get(lang, set())
+
+    for node in tree.root_node.children:
+        if node.is_named is False:
+            continue  # skip punctuation / whitespace tokens
+
+        start = node.start_point[0]      # 0-indexed line
+        end   = node.end_point[0] + 1    # exclusive
+        src   = "".join(lines[start:end])
+
+        if not src.strip():
+            continue
+
+        name: str | None = None
+
+        if node.type in imp_types:
+            blocks.append(("import", None, src))
+
+        elif node.type in fn_types:
+            # Could be a constant-assigned arrow/lambda — check first
+            if _is_constant_node(node, lang):
+                name = _node_top_name(node, lang)
+                blocks.append(("constant", name, src))
+            else:
+                name = _node_top_name(node, lang)
+                blocks.append(("function", name, src))
+
+        elif node.type in cls_types:
+            name = _node_top_name(node, lang)
+            blocks.append(("class", name, src))
+
+        elif _is_constant_node(node, lang):
+            name = _node_top_name(node, lang)
+            blocks.append(("constant", name, src))
+
+        else:
+            # Python decorated_definition wraps a def/class
+            if node.type == "decorated_definition" and lang == "python":
+                inner = node.children[-1] if node.children else None
+                if inner and inner.type in ("function_definition", "async_function_definition"):
+                    name = _node_top_name(inner, lang)
+                    blocks.append(("function", name, src))
+                elif inner and inner.type == "class_definition":
+                    name = _node_top_name(inner, lang)
+                    blocks.append(("class", name, src))
+                else:
+                    blocks.append(("other", None, src))
+            else:
+                blocks.append(("other", None, src))
+
+    return blocks
+
 def get_function(path: str, name: str) -> FunctionResult | None:
     """Parse the file. Find symbol with matching name and kind=='function' or 'method'."""
     symbols = parse_file(path)
@@ -381,4 +572,203 @@ def extract_calls(path: str) -> list[tuple[int, str]]:
             
     walk(tree.root_node)
     return calls
+
+
+def extract_references(path: str, symbol_names: set[str]) -> list[tuple[str, int]]:
+    """
+    Parse file and find all identifier nodes matching any name in symbol_names.
+
+    Returns a list of (symbol_name, line) tuples for every reference found.
+    References include: plain identifiers, attribute access (obj.Name),
+    import usage, assignments, and return values.
+    """
+    lang = detect_language(path)
+    if not lang or lang not in PARSERS:
+        return []
+
+    try:
+        with open(path, "rb") as f:
+            source_bytes = f.read()
+    except Exception:
+        return []
+
+    parser = PARSERS[lang]
+    local_parser = Parser(parser.language)
+    tree = local_parser.parse(source_bytes)
+
+    refs: list[tuple[str, int]] = []
+
+    # Node types that should be skipped to avoid counting definitions as references
+    def _is_definition_node(node) -> bool:
+        if lang == "python":
+            if node.type == "function_definition" or node.type == "class_definition":
+                return True
+            if node.type == "decorated_definition":
+                for child in node.children:
+                    if child.type in ("function_definition", "class_definition"):
+                        return True
+        elif lang in ("javascript", "typescript"):
+            if node.type in ("function_declaration", "class_declaration",
+                             "generator_function_declaration"):
+                return True
+        elif lang == "java":
+            if node.type in ("method_declaration", "class_declaration",
+                             "constructor_declaration"):
+                return True
+        elif lang == "go":
+            if node.type in ("function_declaration", "method_declaration",
+                             "type_declaration"):
+                return True
+        elif lang == "rust":
+            if node.type in ("function_item", "impl_item", "struct_item",
+                             "trait_item", "enum_item"):
+                return True
+        return False
+
+    def walk(node):
+        # Skip the *signature* of definition nodes (the def/class line itself),
+        # but still walk into the body to find references within.
+        if _is_definition_node(node):
+            # Only skip the name node of the definition, not the body
+            for child in node.children:
+                # Skip the name/identifier child of the definition node
+                if child.type == "identifier":
+                    continue
+                walk(child)
+            return
+
+        # Check identifier / field / attribute nodes
+        if node.type == "identifier" or node.type == "field_identifier":
+            name = node.text.decode(errors="replace")
+            if name in symbol_names:
+                refs.append((name, node.start_point[0] + 1))
+
+        # Python: attribute access like obj.Name or module.Name
+        if node.type == "attribute":
+            attr_node = node.child_by_field_name("attribute")
+            if attr_node:
+                name = attr_node.text.decode(errors="replace")
+                if name in symbol_names:
+                    refs.append((name, attr_node.start_point[0] + 1))
+
+        # Java/Rust: scoped identifiers like self.Name, crate::module::Name
+        if node.type == "scoped_identifier":
+            # The last part of the scope is the actual symbol
+            parts = node.text.decode(errors="replace").split("::")
+            if parts:
+                last = parts[-1]
+                if last in symbol_names:
+                    refs.append((last, node.start_point[0] + 1))
+
+        for child in node.children:
+            walk(child)
+
+    walk(tree.root_node)
+    return refs
+
+
+def extract_docstrings(path: str) -> list[tuple[str, str, int, int]]:
+    """
+    Parse file and extract docstrings for each function/class symbol.
+
+    Returns a list of (symbol_name, docstring_content, line_start, line_end) tuples.
+    Only includes symbols that actually have a docstring.
+    """
+    lang = detect_language(path)
+    if not lang or lang not in PARSERS:
+        return []
+
+    try:
+        with open(path, "rb") as f:
+            source_bytes = f.read()
+    except Exception:
+        return []
+
+    parser = PARSERS[lang]
+    local_parser = Parser(parser.language)
+    tree = local_parser.parse(source_bytes)
+
+    node_types = NODE_TYPES.get(lang, {})
+    results: list[tuple[str, str, int, int]] = []
+
+    def _extract_docstring_from_node(node) -> str | None:
+        """Extract the first string literal after a function/class definition."""
+        # Walk children looking for a string expression right after the signature
+        if lang == "python":
+            # Python docstrings are the first expression_statement in the body
+            for child in node.children:
+                if child.type == "block":
+                    for stmt in child.children:
+                        if stmt.type == "expression_statement":
+                            expr = stmt.children[0] if stmt.children else None
+                            if expr and expr.type == "string":
+                                return expr.text.decode(errors="replace")
+                        # Skip any non-string statement (docstring must be first)
+                        break
+            # Try direct string child (some AST representations)
+            for child in node.children:
+                if child.type == "string":
+                    return child.text.decode(errors="replace")
+        elif lang in ("javascript", "typescript"):
+            # JS/TS: look for comment blocks before the function, or first string in body
+            for child in node.children:
+                if child.type == "statement_block":
+                    for stmt in child.children:
+                        if stmt.type == "expression_statement":
+                            expr = stmt.children[0] if stmt.children else None
+                            if expr and expr.type == "string":
+                                return expr.text.decode(errors="replace")
+                        break
+        elif lang == "java":
+            # Java: look for first statement in method body that's a string
+            for child in node.children:
+                if child.type in ("block", "class_body"):
+                    for stmt in child.children:
+                        if stmt.type == "expression_statement":
+                            expr = stmt.children[0] if stmt.children else None
+                            if expr and expr.type == "string_literal":
+                                return expr.text.decode(errors="replace")
+                        break
+        elif lang == "go":
+            # Go: docstring is the comment group before the declaration
+            # For now, check first statement in function body
+            for child in node.children:
+                if child.type == "block":
+                    for stmt in child.children:
+                        if stmt.type == "expression_statement":
+                            expr = stmt.children[0] if stmt.children else None
+                            if expr and expr.type == "raw_string_literal":
+                                return expr.text.decode(errors="replace")
+                        break
+        elif lang == "rust":
+            # Rust: docstrings are outer attributes (/// comments)
+            # For now, check for string in first statement
+            for child in node.children:
+                if child.type == "block":
+                    for stmt in child.children:
+                        if stmt.type == "expression_statement":
+                            expr = stmt.children[0] if stmt.children else None
+                            if expr and expr.type == "string_literal":
+                                return expr.text.decode(errors="replace")
+                        break
+        return None
+
+    def walk(node):
+        if node.type in node_types:
+            name = _extract_name(node)
+            if name:
+                docstring = _extract_docstring_from_node(node)
+                if docstring:
+                    # Strip surrounding quotes
+                    stripped = docstring.strip()
+                    for quote in ('"""', "'''", '"""', "'''", '"', "'"):
+                        if stripped.startswith(quote) and stripped.endswith(quote) and len(stripped) >= 2 * len(quote):
+                            stripped = stripped[len(quote):-len(quote)].strip()
+                            break
+                    results.append((name, stripped, node.start_point[0] + 1, node.end_point[0] + 1))
+        for child in node.children:
+            walk(child)
+
+    walk(tree.root_node)
+    return results
 

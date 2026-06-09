@@ -536,78 +536,6 @@ async def get_function_body(
     )
 
 
-# ---------------------------------------------------------------------------
-# Call graph helpers
-# ---------------------------------------------------------------------------
-
-async def _query_call_edges(symbol_filter: list[str] | None = None) -> list[CallEdge]:
-    if symbol_filter:
-        placeholders = ", ".join("?" * len(symbol_filter))
-        query_str = (
-            "SELECT sc.name AS caller_name, fc.path AS caller_file, "
-            "       sc.line_start AS caller_line, ce.callee_name, fe.path AS callee_file "
-            "FROM call_edges ce "
-            "JOIN symbols sc ON ce.caller_id = sc.id "
-            "JOIN files   fc ON sc.file_id   = fc.id "
-            "LEFT JOIN symbols se ON ce.callee_id = se.id "
-            "LEFT JOIN files   fe ON se.file_id   = fe.id "
-            f"WHERE sc.name IN ({placeholders}) OR ce.callee_name IN ({placeholders})"
-        )
-        params: list = symbol_filter + symbol_filter
-    else:
-        query_str = (
-            "SELECT sc.name AS caller_name, fc.path AS caller_file, "
-            "       sc.line_start AS caller_line, ce.callee_name, fe.path AS callee_file "
-            "FROM call_edges ce "
-            "JOIN symbols sc ON ce.caller_id = sc.id "
-            "JOIN files   fc ON sc.file_id   = fc.id "
-            "LEFT JOIN symbols se ON ce.callee_id = se.id "
-            "LEFT JOIN files   fe ON se.file_id   = fe.id "
-            "ORDER BY fc.path, sc.line_start"
-        )
-        params = []
-
-    edges: list[CallEdge] = []
-    async with get_db() as db:
-        async with db.execute(query_str, params) as cursor:
-            rows = await cursor.fetchall()
-            for r in rows:
-                edges.append(CallEdge(
-                    caller_name=r["caller_name"],
-                    caller_file=r["caller_file"],
-                    caller_line=r["caller_line"],
-                    callee_name=r["callee_name"],
-                    callee_file=r["callee_file"],
-                ))
-    return edges
-
-
-async def get_callers(symbol_name: str, limit: int = 20) -> list[CallEdge]:
-    """
-    Return functions that call the given symbol, capped at limit.
-
-    Use for impact analysis — "if I change this, what breaks?"
-    Popular functions can have hundreds of callers; limit prevents floods.
-    """
-    if not symbol_name or not symbol_name.strip():
-        raise ValueError("symbol_name must be a non-empty string.")
-    edges = await _query_call_edges(symbol_filter=[symbol_name])
-    return [e for e in edges if e.callee_name == symbol_name][:limit]
-
-
-async def get_callees(symbol_name: str, limit: int = 20) -> list[CallEdge]:
-    """
-    Return functions that the given symbol calls, capped at limit.
-
-    Use to understand dependencies before reading a function body.
-    """
-    if not symbol_name or not symbol_name.strip():
-        raise ValueError("symbol_name must be a non-empty string.")
-    edges = await _query_call_edges(symbol_filter=[symbol_name])
-    return [e for e in edges if e.caller_name == symbol_name][:limit]
-
-
-
 
 # ---------------------------------------------------------------------------
 # FileIndex (for get_index)
@@ -641,29 +569,56 @@ class RepoOverview:
 # Index queries
 # ---------------------------------------------------------------------------
 
-async def _query_index(file_filter: list[str] | None) -> list[FileIndex]:
+async def _query_index(
+    file_filter: list[str] | None = None,
+    dir_filter: str | None = None,
+    package_filter: str | None = None,
+    query_filter: str | None = None,
+) -> list[FileIndex]:
     """
     Core DB query shared by all index functions.
     Pulls (file, name, kind, line_start, line_end) grouped by file.
+
+    Filters (all optional, combined with AND):
+        file_filter:    Exact file paths (IN clause).
+        dir_filter:     Directory prefix — files whose path starts with this.
+        package_filter: Package path — files under this package directory.
+        query_filter:   Substring match on file path.
     """
+    conditions: list[str] = []
+    params: list = []
+
     if file_filter:
         placeholders = ", ".join("?" * len(file_filter))
-        query_str = (
-            "SELECT f.path, s.name, s.kind, s.line_start, s.line_end "
-            "FROM symbols s "
-            "JOIN files f ON s.file_id = f.id "
-            f"WHERE f.path IN ({placeholders}) "
-            "ORDER BY f.path, s.line_start"
-        )
-        params: list = file_filter
-    else:
-        query_str = (
-            "SELECT f.path, s.name, s.kind, s.line_start, s.line_end "
-            "FROM symbols s "
-            "JOIN files f ON s.file_id = f.id "
-            "ORDER BY f.path, s.line_start"
-        )
-        params = []
+        conditions.append(f"f.path IN ({placeholders})")
+        params.extend(file_filter)
+
+    if dir_filter:
+        # Normalize: ensure trailing slash for prefix match
+        prefix = dir_filter.rstrip("/").replace("\\", "/") + "/"
+        conditions.append("f.path LIKE ?")
+        params.append(prefix + "%")
+
+    if package_filter:
+        # Match files under the package dir (with or without leading path)
+        pkg = package_filter.rstrip("/").replace("\\", "/")
+        conditions.append("(f.path LIKE ? OR f.path LIKE ?)")
+        params.append(pkg + "/%")
+        params.append("%/" + pkg + "/%")
+
+    if query_filter:
+        conditions.append("f.path LIKE ?")
+        params.append("%" + query_filter + "%")
+
+    where_clause = (" WHERE " + " AND ".join(conditions)) if conditions else ""
+
+    query_str = (
+        "SELECT f.path, s.name, s.kind, s.line_start, s.line_end "
+        "FROM symbols s "
+        "JOIN files f ON s.file_id = f.id "
+        f"{where_clause} "
+        "ORDER BY f.path, s.line_start"
+    )
 
     index_map: dict[str, FileIndex] = {}
     async with get_db() as db:
@@ -694,12 +649,10 @@ async def _query_call_edges(symbol_filter: list[str] | None = None) -> list[Call
             "  fc.path  AS caller_file, "
             "  sc.line_start AS caller_line, "
             "  ce.callee_name, "
-            "  fe.path  AS callee_file "
+            "  ce.callee_file "
             "FROM call_edges ce "
             "JOIN symbols sc ON ce.caller_id = sc.id "
             "JOIN files   fc ON sc.file_id   = fc.id "
-            "LEFT JOIN symbols se ON ce.callee_id  = se.id "
-            "LEFT JOIN files   fe ON se.file_id    = fe.id "
             f"WHERE sc.name IN ({placeholders}) OR ce.callee_name IN ({placeholders})"
         )
         params: list = symbol_filter + symbol_filter
@@ -710,12 +663,10 @@ async def _query_call_edges(symbol_filter: list[str] | None = None) -> list[Call
             "  fc.path  AS caller_file, "
             "  sc.line_start AS caller_line, "
             "  ce.callee_name, "
-            "  fe.path  AS callee_file "
+            "  ce.callee_file "
             "FROM call_edges ce "
             "JOIN symbols sc ON ce.caller_id = sc.id "
             "JOIN files   fc ON sc.file_id   = fc.id "
-            "LEFT JOIN symbols se ON ce.callee_id  = se.id "
-            "LEFT JOIN files   fe ON se.file_id    = fe.id "
             "ORDER BY fc.path, sc.line_start"
         )
         params = []
@@ -755,12 +706,19 @@ def _build_lookup_maps(edges: list[CallEdge]) -> tuple[dict[str, list[str]], dic
     return callees, callers
 
 
-async def get_index(files: list[str] | None = None) -> list[FileIndex]:
+async def get_index(
+    files: list[str] | None = None,
+    dir_filter: str | None = None,
+    package_filter: str | None = None,
+    query_filter: str | None = None,
+) -> list[FileIndex]:
     """
     Get file and symbol index for the repository.
     - get_index() → full repo (all files + symbols)
     - get_index(files=["foo.py"]) → index for foo.py only
-    
+    - get_index(dir_filter="src/core") → all files under src/core/
+    - get_index(package_filter="codeengine.core") → all files in that package
+
     Recommended agent flow:
         1. get_index() - understand whole repo (~5-10k tokens)
         2. get_index(files=["payment.py"]) - zoom into file (~100 tokens)
@@ -769,7 +727,12 @@ async def get_index(files: list[str] | None = None) -> list[FileIndex]:
     """
     if files is not None and len(files) == 0:
         raise ValueError("Pass None for full repo index, or non-empty list of file paths.")
-    return await _query_index(file_filter=files)
+    return await _query_index(
+        file_filter=files,
+        dir_filter=dir_filter,
+        package_filter=package_filter,
+        query_filter=query_filter,
+    )
 
 
 async def get_callers(symbol_name: str) -> list[CallEdge]:
@@ -794,33 +757,164 @@ async def get_callees(symbol_name: str) -> list[CallEdge]:
     return [e for e in edges if e.caller_name == symbol_name]
 
 
-async def get_repo_overview(files: list[str] | None = None) -> RepoOverview:
+# ---------------------------------------------------------------------------
+# Symbol usages (references table)
+# ---------------------------------------------------------------------------
+
+@dataclass
+class SymbolUsage:
+    """A single usage/reference of a symbol in the codebase."""
+    symbol_name: str
+    kind: str
+    file: str
+    line: int
+
+
+async def find_symbol_usages(symbol_name: str, limit: int = 50) -> list[SymbolUsage]:
+    """
+    Find all places where a symbol is referenced (used) in the codebase.
+
+    This goes beyond call_edges — it finds assignments, imports, attribute access,
+    type annotations, and any other identifier references.
+
+    Args:
+        symbol_name: Name of the symbol to find usages for.
+        limit:       Max results to return (default 50).
+    """
+    if not symbol_name or not symbol_name.strip():
+        raise ValueError("symbol_name must be a non-empty string.")
+
+    query_str = (
+        "SELECT s.name AS symbol_name, s.kind, f.path AS file, r.line "
+        "FROM symbol_references r "
+        "JOIN symbols s ON r.symbol_id = s.id "
+        "JOIN files   f ON r.file_id   = f.id "
+        "WHERE s.name = ? "
+        "ORDER BY f.path, r.line "
+        "LIMIT ?"
+    )
+    usages: list[SymbolUsage] = []
+    async with get_db() as db:
+        async with db.execute(query_str, [symbol_name, limit]) as cursor:
+            rows = await cursor.fetchall()
+            for r in rows:
+                usages.append(SymbolUsage(
+                    symbol_name=r["symbol_name"],
+                    kind=r["kind"],
+                    file=r["file"],
+                    line=r["line"],
+                ))
+    return usages
+
+
+# ---------------------------------------------------------------------------
+# Docstrings (docstrings table)
+# ---------------------------------------------------------------------------
+
+@dataclass
+class DocstringResult:
+    """Docstring content for a symbol."""
+    symbol_name: str
+    kind: str
+    file: str
+    content: str
+    line_start: int
+    line_end: int
+
+
+async def get_docstring(symbol_name: str, file: str | None = None) -> list[DocstringResult]:
+    """
+    Retrieve docstrings for a symbol, optionally filtered by file.
+
+    Args:
+        symbol_name: Name of the symbol.
+        file:        Optional file path to narrow results.
+    """
+    if not symbol_name or not symbol_name.strip():
+        raise ValueError("symbol_name must be a non-empty string.")
+
+    if file:
+        query_str = (
+            "SELECT s.name AS symbol_name, s.kind, f.path AS file, "
+            "       d.content, d.line_start, d.line_end "
+            "FROM docstrings d "
+            "JOIN symbols s ON d.symbol_id = s.id "
+            "JOIN files   f ON s.file_id   = f.id "
+            "WHERE s.name = ? AND f.path = ?"
+        )
+        params: list = [symbol_name, file]
+    else:
+        query_str = (
+            "SELECT s.name AS symbol_name, s.kind, f.path AS file, "
+            "       d.content, d.line_start, d.line_end "
+            "FROM docstrings d "
+            "JOIN symbols s ON d.symbol_id = s.id "
+            "JOIN files   f ON s.file_id   = f.id "
+            "WHERE s.name = ?"
+        )
+        params = [symbol_name]
+
+    results: list[DocstringResult] = []
+    async with get_db() as db:
+        async with db.execute(query_str, params) as cursor:
+            rows = await cursor.fetchall()
+            for r in rows:
+                results.append(DocstringResult(
+                    symbol_name=r["symbol_name"],
+                    kind=r["kind"],
+                    file=r["file"],
+                    content=r["content"],
+                    line_start=r["line_start"],
+                    line_end=r["line_end"],
+                ))
+    return results
+
+
+async def get_repo_overview(
+    files: list[str] | None = None,
+    dir_filter: str | None = None,
+    package_filter: str | None = None,
+    query_filter: str | None = None,
+) -> RepoOverview:
     """
     Single call that gives complete mental model of repo.
-    
+
     Combines:
     - Full file + symbol index (what exists, where)
     - Full call graph (what calls what)
     - Caller/callee lookup maps (pre-built)
-    
+
+    Filters (all optional, combined with AND):
+        files:          Exact file paths.
+        dir_filter:     Directory prefix — files under this dir.
+        package_filter: Package path — files in this package.
+        query_filter:   Substring match on file path.
+
     Token cost: ~15-30k for full repo (200 files, 1000 symbols, 3000 edges)
               or ~500 tokens for single file
     """
     if files is not None and len(files) == 0:
         raise ValueError("Pass None for full repo, or non-empty list of file paths.")
 
-    # Run queries concurrently
+    # Run index query concurrently with call edges
     file_index, all_edges = await asyncio.gather(
-        _query_index(file_filter=files),
+        _query_index(
+            file_filter=files,
+            dir_filter=dir_filter,
+            package_filter=package_filter,
+            query_filter=query_filter,
+        ),
         _query_call_edges(symbol_filter=None),
     )
 
-    # If scoped to specific files, filter edges
-    if files:
-        file_set = set(files)
+    # Build set of files in the filtered index for edge filtering
+    filtered_files = {fi.file for fi in file_index}
+
+    # Filter edges to only include those touching files in the result set
+    if filtered_files:
         all_edges = [
             e for e in all_edges
-            if e.caller_file in file_set or (e.callee_file and e.callee_file in file_set)
+            if e.caller_file in filtered_files or (e.callee_file and e.callee_file in filtered_files)
         ]
 
     callees, callers = _build_lookup_maps(all_edges)

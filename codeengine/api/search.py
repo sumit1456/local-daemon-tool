@@ -2,7 +2,8 @@ from fastapi import APIRouter, Query, HTTPException
 from codeengine.core.search_engine import (
     search_code, search_symbol, find_file,
     get_index, get_callers, get_callees, get_repo_overview,
-    get_function_signature, get_function_body
+    get_function_signature, get_function_body,
+    find_symbol_usages, get_docstring,
 )
 from codeengine.core.ast_engine import get_function, get_class, parse_code_string
 from codeengine.models.search_models import SearchResponse, Symbol, FunctionResult
@@ -69,10 +70,20 @@ async def read_file_content(file: str):
         raise HTTPException(status_code=500, detail=str(e))
 
 @router.get("/index")
-async def get_index_route(files: list[str] = Query(None)):
+async def get_index_route(
+    files: list[str] = Query(None),
+    dir: str | None = Query(None, description="Directory prefix filter"),
+    package: str | None = Query(None, description="Package path filter"),
+    q: str | None = Query(None, description="Substring match on file path"),
+):
     """Get file and symbol index for the repository."""
     try:
-        return await get_index(files)
+        return await get_index(
+            files=files,
+            dir_filter=dir,
+            package_filter=package,
+            query_filter=q,
+        )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
@@ -93,10 +104,20 @@ async def get_callees_route(symbol_name: str = Query(...)):
         raise HTTPException(status_code=400, detail=str(e))
 
 @router.get("/overview")
-async def get_overview_route(files: list[str] = Query(None)):
+async def get_overview_route(
+    files: list[str] = Query(None),
+    dir: str | None = Query(None, description="Directory prefix filter (e.g. 'src/core')"),
+    package: str | None = Query(None, description="Package path filter (e.g. 'codeengine.core')"),
+    q: str | None = Query(None, description="Substring match on file path"),
+):
     """Get a complete overview of the repository including call edges."""
     try:
-        return await get_repo_overview(files)
+        return await get_repo_overview(
+            files=files,
+            dir_filter=dir,
+            package_filter=package,
+            query_filter=q,
+        )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
@@ -119,6 +140,23 @@ async def get_function_body_route(file: str = Query(...), line_start: int = Quer
         return await get_function_body(full_path, line_start, line_end)
     except (FileNotFoundError, ValueError) as e:
         raise HTTPException(status_code=404 if isinstance(e, FileNotFoundError) else 400, detail=str(e))
+
+
+@router.get("/usages")
+async def find_symbol_usages_route(symbol_name: str = Query(...), limit: int = Query(50)):
+    """Find all places where a symbol is referenced (used) in the codebase."""
+    try:
+        return await find_symbol_usages(symbol_name, limit)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+@router.get("/docstring")
+async def get_docstring_route(symbol_name: str = Query(...), file: str | None = Query(None)):
+    """Retrieve docstrings for a symbol, optionally filtered by file."""
+    try:
+        return await get_docstring(symbol_name, file)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
 
 
 class DetectOriginalRequest(BaseModel):
