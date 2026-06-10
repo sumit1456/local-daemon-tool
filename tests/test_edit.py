@@ -39,7 +39,7 @@ Active: {meta.get('active', False)!r}"""
 
 
 # ── 3. Decorator with wrapper that has similar variable names ──────────────
-def retry(max_attempts: int = 5, delay: float = 2.0):
+def retry(max_attempts: int = 3, delay: float = 1.0):
     def decorator(func):
         @wraps(func)
         async def wrapper(*args, **kwargs):
