@@ -1347,75 +1347,6 @@ async def trace_execution(symbol_name: str, max_depth: int = 5) -> dict:
     }
 
 
-def _build_overview_summary(all_files: list[FileIndex], all_edges: list[CallEdge]) -> dict:
-    """Build compact overview summary — index stats + edge stats in ~300 tokens."""
-    from collections import Counter
-
-    # Reuse index summary
-    index_summary = _build_index_summary(all_files)
-
-    # Edge stats
-    total_edges = len(all_edges)
-    unique_callers = set()
-    unique_callees = set()
-    file_edge_count: Counter = Counter()
-
-    for e in all_edges:
-        unique_callers.add(e.caller_name)
-        if e.callee_name:
-            unique_callees.add(e.callee_name)
-        file_edge_count[e.caller_file] += 1
-
-    # Top files by edge count (most connected / highest fan-out)
-    top_connected = [
-        {"file": f, "outgoing_calls": c}
-        for f, c in file_edge_count.most_common(10)
-    ]
-
-    # Top callers (most outgoing calls)
-    caller_count: Counter = Counter()
-    for e in all_edges:
-        caller_count[e.caller_name] += 1
-    top_callers = [
-        {"symbol": name, "calls": count}
-        for name, count in caller_count.most_common(10)
-    ]
-
-    # Top callees (most called / highest fan-in)
-    callee_count: Counter = Counter()
-    for e in all_edges:
-        if e.callee_name:
-            callee_count[e.callee_name] += 1
-    top_callees = [
-        {"symbol": name, "called_by": count}
-        for name, count in callee_count.most_common(10)
-    ]
-
-    # Files with most incoming calls (most depended on)
-    incoming: Counter = Counter()
-    for e in all_edges:
-        if e.callee_file:
-            incoming[e.callee_file] += 1
-    most_depended = [
-        {"file": f, "incoming_calls": c}
-        for f, c in incoming.most_common(10)
-    ]
-
-    return {
-        "mode": "summary",
-        **index_summary,
-        "call_graph": {
-            "total_edges": total_edges,
-            "unique_callers": len(unique_callers),
-            "unique_callees": len(unique_callees),
-            "top_connected_files": top_connected,
-            "most_depended_files": most_depended,
-            "top_callers": top_callers,
-            "top_callees": top_callees,
-        },
-    }
-
-
 async def get_repo_overview(
     files: list[str] | None = None,
     dir_filter: str | None = None,
@@ -1425,63 +1356,64 @@ async def get_repo_overview(
     offset: int = 0,
 ) -> dict:
     """
-    Single call that gives complete mental model of repo.
+    Repository overview — summary or detailed depending on filters.
 
-    Combines:
-    - Full file + symbol index (what exists, where)
-    - Full call graph (what calls what)
-    - Caller/callee lookup maps (pre-built)
+    No filters → summary mode (~300 tokens):
+        dir breakdown, languages, symbol kinds, edge stats, top callers/callees.
 
-    Filters (all optional, combined with AND):
-        files:          Exact file paths.
-        dir_filter:     Directory prefix — files under this dir.
-        package_filter: Package path — files in this package.
-        query_filter:   Substring match on file path.
+    With filters → detailed mode (~500-5k tokens):
+        paginated file list + filtered call edges + lookup maps.
 
-    Pagination:
-        limit:  Max number of files to return (default: 50).
-        offset: Number of files to skip (default: 0).
-
-    Token cost: ~15-30k for full repo (200 files, 1000 symbols, 3000 edges)
-              or ~500 tokens for single file
+    Recommended agent flow:
+        1. get_overview()              — understand repo shape (summary)
+        2. get_overview(dir="core")    — zoom into area (paginated + edges)
+        3. get_index(files=["x.py"])   — single file symbols
+        4. get_signature(...)          — just sig + docstring
     """
     if files is not None and len(files) == 0:
         raise ValueError("Pass None for full repo, or non-empty list of file paths.")
 
-    # Run index query concurrently with call edges
-    all_files, all_edges = await asyncio.gather(
-        _query_index(
-            file_filter=files,
-            dir_filter=dir_filter,
-            package_filter=package_filter,
-            query_filter=query_filter,
-        ),
-        _query_call_edges(symbol_filter=None),
+    has_filters = any([files, dir_filter, package_filter, query_filter])
+
+    all_files = await _query_index(
+        file_filter=files,
+        dir_filter=dir_filter,
+        package_filter=package_filter,
+        query_filter=query_filter,
     )
+
+    if not has_filters:
+        # Summary mode: index summary + edge stats
+        all_edges = await _query_call_edges()
+        return _build_overview_summary(all_files, all_edges)
+
+    # Detailed mode: paginated files + filtered edges
+    all_edges = await _query_call_edges()
 
     total_files = len(all_files)
     sliced_files = all_files[offset:offset + limit]
     sliced_file_set = {fi.file for fi in sliced_files}
 
-    # Filter edges to only include those touching files in the result set
-    has_filters = any([files, dir_filter, package_filter, query_filter])
-    if has_filters:
-        if sliced_file_set:
-            all_edges = [
-                e for e in all_edges
-                if e.caller_file in sliced_file_set or (e.callee_file and e.callee_file in sliced_file_set)
-            ]
-        else:
-            all_edges = []
+    # Filter edges to only those touching sliced files
+    if sliced_file_set:
+        filtered_edges = [
+            e for e in all_edges
+            if e.caller_file in sliced_file_set or (e.callee_file and e.callee_file in sliced_file_set)
+        ]
+    else:
+        filtered_edges = []
 
-    callees, callers = _build_lookup_maps(all_edges)
+    callees, callers = _build_lookup_maps(filtered_edges)
+    has_more = offset + limit < total_files
 
     return {
         "total_files": total_files,
         "offset": offset,
         "limit": limit,
+        "has_more": has_more,
+        "next_offset": offset + limit if has_more else None,
         "files": sliced_files,
-        "edges": all_edges,
+        "edges": filtered_edges,
         "callees": callees,
         "callers": callers,
     }
