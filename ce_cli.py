@@ -648,12 +648,32 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--files", nargs="*", default=None,
                    metavar="FILE",
                    help="Scope to specific files (omit for full repo)")
+    s.add_argument("--dir", default=None,
+                   help="Directory prefix filter (e.g. src/core)")
+    s.add_argument("--package", default=None,
+                   help="Package path filter (e.g. codeengine.core)")
+    s.add_argument("--q", default=None,
+                   help="Substring match on file path")
+    s.add_argument("--limit", type=int, default=50,
+                   help="Max files to return (default: 50)")
+    s.add_argument("--offset", type=int, default=0,
+                   help="Number of files to skip (default: 0)")
 
     # overview
     s = sub.add_parser("overview", help="Full repo overview: symbols + call graph")
     s.add_argument("--files", nargs="*", default=None,
                    metavar="FILE",
                    help="Scope to specific files (omit for full repo)")
+    s.add_argument("--dir", default=None,
+                   help="Directory prefix filter (e.g. src/core)")
+    s.add_argument("--package", default=None,
+                   help="Package path filter (e.g. codeengine.core)")
+    s.add_argument("--q", default=None,
+                   help="Substring match on file path")
+    s.add_argument("--limit", type=int, default=50,
+                   help="Max files to return (default: 50)")
+    s.add_argument("--offset", type=int, default=0,
+                   help="Number of files to skip (default: 0)")
 
     # callers
     s = sub.add_parser("callers", help="Who calls a given symbol?")
