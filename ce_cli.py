@@ -272,22 +272,31 @@ This CLI bridges the gap: agents call it via run_command/PowerShell,
 and it talks to the local server on their behalf.
 
 Usage (from the local-daemon-tool directory):
+    .venv\Scripts\python.exe ce_cli.py ping
     .venv\Scripts\python.exe ce_cli.py search "pattern" [--path .] [--lang python] [--limit 50]
     .venv\Scripts\python.exe ce_cli.py symbol "name"   [--kind function|class|method|interface]
     .venv\Scripts\python.exe ce_cli.py file   "pattern" [--root .]
     .venv\Scripts\python.exe ce_cli.py function "rel/path/to/file.py" "FunctionName"
     .venv\Scripts\python.exe ce_cli.py class    "rel/path/to/file.py" "ClassName"
-    .venv\Scripts\python.exe ce_cli.py index    [--files foo.py bar.py]
-    .venv\Scripts\python.exe ce_cli.py overview [--files foo.py bar.py]
-    .venv\Scripts\python.exe ce_cli.py callers  "symbol_name"
-    .venv\Scripts\python.exe ce_cli.py callees  "symbol_name"
+    .venv\Scripts\python.exe ce_cli.py index    [--files foo.py bar.py] [--dir src] [--package codeengine.core]
+    .venv\Scripts\python.exe ce_cli.py overview [--files foo.py bar.py] [--dir src] [--package codeengine.core]
+    .venv\Scripts\python.exe ce_cli.py callers  "symbol_name" [--dir src] [--package codeengine.core]
+    .venv\Scripts\python.exe ce_cli.py callees  "symbol_name" [--dir src] [--package codeengine.core]
     .venv\Scripts\python.exe ce_cli.py signature "rel/path/to/file.py" 42 89
     .venv\Scripts\python.exe ce_cli.py body      "rel/path/to/file.py" 42 89
-    .venv\Scripts\python.exe ce_cli.py detect    "def foo(): pass"
+    .venv\Scripts\python.exe ce_cli.py detect    "def foo(): pass" [--file_hint x.py] [--lang_hint python]
     .venv\Scripts\python.exe ce_cli.py preview-smart "rel/path/to/file.py" "new_code"
     .venv\Scripts\python.exe ce_cli.py apply-smart "edit_id"
-    .venv\Scripts\python.exe ce_cli.py parse-blocks "def foo(): pass"
-    .venv\Scripts\python.exe ce_cli.py ping
+    .venv\Scripts\python.exe ce_cli.py parse-blocks "def foo(): pass" [--file_hint x.py] [--lang_hint python]
+    .venv\Scripts\python.exe ce_cli.py edit-context "symbol_name" [--file x.py] [--dir src] [--package codeengine.core]
+    .venv\Scripts\python.exe ce_cli.py imports "rel/path/to/file.py"
+    .venv\Scripts\python.exe ce_cli.py importers "module.name"
+    .venv\Scripts\python.exe ce_cli.py file-deps "rel/path/to/file.py"
+    .venv\Scripts\python.exe ce_cli.py type-info "symbol_name" [--file x.py]
+    .venv\Scripts\python.exe ce_cli.py defined-symbols "rel/path/to/file.py"
+    .venv\Scripts\python.exe ce_cli.py count-refs "symbol_name"
+    .venv\Scripts\python.exe ce_cli.py impact "symbol_name"
+    .venv\Scripts\python.exe ce_cli.py trace "symbol_name" [--depth 5]
 """
 
 import sys
@@ -377,7 +386,11 @@ def cmd_search(args) -> None:
 
 def cmd_symbol(args) -> None:
     """Search the AST symbol index (functions, classes, methods)."""
-    data = _get("/search/symbol", name=args.name, kind=args.kind)
+    data = _get("/search/symbol",
+                name=args.name,
+                kind=args.kind,
+                dir=args.dir,
+                package=args.package)
     _out(data)
 
 
@@ -422,26 +435,38 @@ def cmd_undo(_args) -> None:
 
 
 def cmd_index(args) -> None:
-    """Get file and symbol index. Pass --files to scope to specific files."""
-    data = _get("/search/index", files=args.files if args.files else None)
+    """Get file and symbol index. Pass --files/--dir/--package to scope."""
+    data = _get("/search/index",
+                files=args.files if args.files else None,
+                dir=args.dir,
+                package=args.package)
     _out(data)
 
 
 def cmd_overview(args) -> None:
-    """Get complete repo overview including call graph. Pass --files to scope."""
-    data = _get("/search/overview", files=args.files)
+    """Get complete repo overview including call graph. Pass --files/--dir/--package to scope."""
+    data = _get("/search/overview",
+                files=args.files if args.files else None,
+                dir=args.dir,
+                package=args.package)
     _out(data)
 
 
 def cmd_callers(args) -> None:
     """Get all functions that call the given symbol."""
-    data = _get("/search/callers", symbol_name=args.symbol_name)
+    data = _get("/search/callers",
+                symbol_name=args.symbol_name,
+                dir=args.dir,
+                package=args.package)
     _out(data)
 
 
 def cmd_callees(args) -> None:
     """Get all functions called by the given symbol."""
-    data = _get("/search/callees", symbol_name=args.symbol_name)
+    data = _get("/search/callees",
+                symbol_name=args.symbol_name,
+                dir=args.dir,
+                package=args.package)
     _out(data)
 
 
@@ -495,6 +520,67 @@ def cmd_parse_blocks(args) -> None:
         "file_path_hint": args.file_hint,
         "lang_hint": args.lang_hint,
     })
+    _out(data)
+
+
+def cmd_edit_context(args) -> None:
+    """Get all structured context required to edit a symbol."""
+    params = {"symbol": args.symbol}
+    if args.file:
+        params["file"] = args.file
+    if args.dir:
+        params["dir"] = args.dir
+    if args.package:
+        params["package"] = args.package
+    data = _get("/search/edit-context", **params)
+    _out(data)
+
+
+def cmd_imports(args) -> None:
+    """Get all imports used by a file."""
+    data = _get("/search/imports", file=args.file)
+    _out(data)
+
+
+def cmd_importers(args) -> None:
+    """Get all files that import a given module (reverse dependency)."""
+    data = _get("/search/importers", module=args.module)
+    _out(data)
+
+
+def cmd_file_deps(args) -> None:
+    """Get complete dependency picture for a file (both directions)."""
+    data = _get("/search/file-deps", file=args.file)
+    _out(data)
+
+
+def cmd_type_info(args) -> None:
+    """Get parameter types and return type for a symbol."""
+    data = _get("/search/type-info", symbol_name=args.symbol_name, file=args.file)
+    _out(data)
+
+
+def cmd_defined_symbols(args) -> None:
+    """Get all symbols defined in a file."""
+    data = _get("/search/defined-symbols", file=args.file)
+    _out(data)
+
+
+def cmd_count_refs(args) -> None:
+    """Count how many times a symbol is referenced."""
+    data = _get("/search/count-references", symbol_name=args.symbol_name)
+    _out(data)
+
+
+def cmd_impact(args) -> None:
+    """Full impact assessment — callers, references, affected files."""
+    data = _get("/search/impact-analysis", symbol_name=args.symbol_name)
+    _out(data)
+
+
+def cmd_trace(args) -> None:
+    """Trace execution flow through the application."""
+    data = _get("/search/trace-execution", symbol_name=args.symbol_name, max_depth=args.max_depth)
     _out(data)
 
 
@@ -605,31 +691,81 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--file_hint", default=None, help="Optional file path hint")
     s.add_argument("--lang_hint", default=None, help="Optional language hint")
 
+    # edit-context
+    s = sub.add_parser("edit-context", help="Get all context needed to edit a symbol")
+    s.add_argument("symbol", help="Symbol name to get context for")
+    s.add_argument("--file", default=None, help="Optional file path filter")
+    s.add_argument("--dir", default=None, help="Optional directory prefix filter")
+    s.add_argument("--package", default=None, help="Optional package path filter")
+
+    # imports
+    s = sub.add_parser("imports", help="Get all imports used by a file")
+    s.add_argument("file", help="Relative file path")
+
+    # importers
+    s = sub.add_parser("importers", help="Get all files that import a module (reverse dependency)")
+    s.add_argument("module", help="Module name (e.g. utils.auth)")
+
+    # file-deps
+    s = sub.add_parser("file-deps", help="Get full dependency picture for a file")
+    s.add_argument("file", help="Relative file path")
+
+    # type-info
+    s = sub.add_parser("type-info", help="Get parameter types and return type for a symbol")
+    s.add_argument("symbol_name", help="Symbol name")
+    s.add_argument("--file", default=None, help="Optional file path filter")
+
+    # defined-symbols
+    s = sub.add_parser("defined-symbols", help="Get all symbols defined in a file")
+    s.add_argument("file", help="Relative file path")
+
+    # count-refs
+    s = sub.add_parser("count-refs", help="Count how many times a symbol is referenced")
+    s.add_argument("symbol_name", help="Symbol name")
+
+    # impact
+    s = sub.add_parser("impact", help="Full impact assessment for a symbol")
+    s.add_argument("symbol_name", help="Symbol name")
+
+    # trace
+    s = sub.add_parser("trace", help="Trace execution flow through the application")
+    s.add_argument("symbol_name", help="Symbol name")
+    s.add_argument("--depth", type=int, default=5, help="Max call chain depth (default: 5)")
+
     return p
 
 
 # ── Entry point ───────────────────────────────────────────────────────────────
 
 HANDLERS = {
-    "ping":      cmd_ping,
-    "search":    cmd_search,
-    "symbol":    cmd_symbol,
-    "file":      cmd_file,
-    "function":  cmd_function,
-    "class":     cmd_class,
-    "preview":   cmd_preview,
-    "apply":     cmd_apply,
-    "undo":      cmd_undo,
-    "index":     cmd_index,
-    "overview":  cmd_overview,
-    "callers":   cmd_callers,
-    "callees":   cmd_callees,
-    "signature": cmd_signature,
-    "body":      cmd_body,
-    "detect":        cmd_detect,
-    "preview-smart": cmd_preview_smart,
-    "apply-smart":   cmd_apply_smart,
-    "parse-blocks":  cmd_parse_blocks,
+    "ping":             cmd_ping,
+    "search":           cmd_search,
+    "symbol":           cmd_symbol,
+    "file":             cmd_file,
+    "function":         cmd_function,
+    "class":            cmd_class,
+    "preview":          cmd_preview,
+    "apply":            cmd_apply,
+    "undo":             cmd_undo,
+    "index":            cmd_index,
+    "overview":         cmd_overview,
+    "callers":          cmd_callers,
+    "callees":          cmd_callees,
+    "signature":        cmd_signature,
+    "body":             cmd_body,
+    "detect":           cmd_detect,
+    "preview-smart":    cmd_preview_smart,
+    "apply-smart":      cmd_apply_smart,
+    "parse-blocks":     cmd_parse_blocks,
+    "edit-context":     cmd_edit_context,
+    "imports":          cmd_imports,
+    "importers":        cmd_importers,
+    "file-deps":        cmd_file_deps,
+    "type-info":        cmd_type_info,
+    "defined-symbols":  cmd_defined_symbols,
+    "count-refs":       cmd_count_refs,
+    "impact":           cmd_impact,
+    "trace":            cmd_trace,
 }
 
 if __name__ == "__main__":
