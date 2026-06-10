@@ -622,8 +622,8 @@ async def _query_index(
         params.append(prefix + "%")
 
     if package_filter:
-        # Match files under the package dir (with or without leading path)
-        pkg = package_filter.rstrip("/").replace("\\", "/")
+        # Convert dot notation to path: codeengine.core -> codeengine/core
+        pkg = package_filter.replace(".", "/").rstrip("/").replace("\\", "/")
         conditions.append("(f.path LIKE ? OR f.path LIKE ?)")
         params.append(pkg + "/%")
         params.append("%/" + pkg + "/%")
