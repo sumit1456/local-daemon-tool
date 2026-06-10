@@ -318,6 +318,9 @@ async def search_symbol(
     name: str,
     kind: str | None = None,
     limit: int = 50,
+    file_filter: list[str] | None = None,
+    dir_filter: str | None = None,
+    package_filter: str | None = None,
 ) -> list[Symbol]:
     """
     Search symbols in SQLite by name, ranked: exact → prefix → substring.
@@ -326,6 +329,9 @@ async def search_symbol(
         name:  Symbol name to search (min 2 chars).
         kind:  Optional kind filter (e.g. "function", "class").
         limit: Max results (default 50).
+        file_filter: Optional list of file paths to restrict search.
+        dir_filter:  Optional directory prefix filter.
+        package_filter: Optional package path filter.
     """
     if not name or len(name.strip()) < 2:
         raise ValueError("Symbol name must be at least 2 characters.")
@@ -347,6 +353,22 @@ async def search_symbol(
     if kind:
         query_str += " AND s.kind = ?"
         params.append(kind)
+
+    if file_filter:
+        placeholders = ", ".join("?" * len(file_filter))
+        query_str += f" AND f.path IN ({placeholders})"
+        params.extend(file_filter)
+
+    if dir_filter:
+        prefix = dir_filter.rstrip("/").replace("\\", "/") + "/"
+        query_str += " AND f.path LIKE ?"
+        params.append(prefix + "%")
+
+    if package_filter:
+        pkg = package_filter.rstrip("/").replace("\\", "/")
+        query_str += " AND (f.path LIKE ? OR f.path LIKE ?)"
+        params.append(pkg + "/%")
+        params.append("%/" + pkg + "/%")
 
     query_str += " ORDER BY rank, s.name LIMIT ?"
     params.append(limit)
@@ -637,39 +659,55 @@ async def _query_index(
     return list(index_map.values())
 
 
-async def _query_call_edges(symbol_filter: list[str] | None = None) -> list[CallEdge]:
+async def _query_call_edges(
+    symbol_filter: list[str] | None = None,
+    file_filter: list[str] | None = None,
+    dir_filter: str | None = None,
+    package_filter: str | None = None,
+) -> list[CallEdge]:
     """
     Pull call edges from the SQLite call_edges table.
+    Supports optional file/dir/package filters on the caller side.
     """
+    conditions: list[str] = []
+    params: list = []
+
     if symbol_filter:
         placeholders = ", ".join("?" * len(symbol_filter))
-        query_str = (
-            "SELECT "
-            "  sc.name  AS caller_name, "
-            "  fc.path  AS caller_file, "
-            "  sc.line_start AS caller_line, "
-            "  ce.callee_name, "
-            "  ce.callee_file "
-            "FROM call_edges ce "
-            "JOIN symbols sc ON ce.caller_id = sc.id "
-            "JOIN files   fc ON sc.file_id   = fc.id "
-            f"WHERE sc.name IN ({placeholders}) OR ce.callee_name IN ({placeholders})"
-        )
-        params: list = symbol_filter + symbol_filter
-    else:
-        query_str = (
-            "SELECT "
-            "  sc.name  AS caller_name, "
-            "  fc.path  AS caller_file, "
-            "  sc.line_start AS caller_line, "
-            "  ce.callee_name, "
-            "  ce.callee_file "
-            "FROM call_edges ce "
-            "JOIN symbols sc ON ce.caller_id = sc.id "
-            "JOIN files   fc ON sc.file_id   = fc.id "
-            "ORDER BY fc.path, sc.line_start"
-        )
-        params = []
+        conditions.append(f"(sc.name IN ({placeholders}) OR ce.callee_name IN ({placeholders}))")
+        params.extend(symbol_filter + symbol_filter)
+
+    if file_filter:
+        placeholders = ", ".join("?" * len(file_filter))
+        conditions.append(f"fc.path IN ({placeholders})")
+        params.extend(file_filter)
+
+    if dir_filter:
+        prefix = dir_filter.rstrip("/").replace("\\", "/") + "/"
+        conditions.append("fc.path LIKE ?")
+        params.append(prefix + "%")
+
+    if package_filter:
+        pkg = package_filter.rstrip("/").replace("\\", "/")
+        conditions.append("(fc.path LIKE ? OR fc.path LIKE ?)")
+        params.append(pkg + "/%")
+        params.append("%/" + pkg + "/%")
+
+    where_clause = (" WHERE " + " AND ".join(conditions)) if conditions else ""
+
+    query_str = (
+        "SELECT "
+        "  sc.name  AS caller_name, "
+        "  fc.path  AS caller_file, "
+        "  sc.line_start AS caller_line, "
+        "  ce.callee_name, "
+        "  ce.callee_file "
+        "FROM call_edges ce "
+        "JOIN symbols sc ON ce.caller_id = sc.id "
+        "JOIN files   fc ON sc.file_id   = fc.id "
+        f"{where_clause} "
+        "ORDER BY fc.path, sc.line_start"
+    )
 
     edges: list[CallEdge] = []
     async with get_db() as db:
@@ -711,7 +749,9 @@ async def get_index(
     dir_filter: str | None = None,
     package_filter: str | None = None,
     query_filter: str | None = None,
-) -> list[FileIndex]:
+    limit: int = 50,
+    offset: int = 0,
+) -> dict:
     """
     Get file and symbol index for the repository.
     - get_index() → full repo (all files + symbols)
@@ -727,33 +767,63 @@ async def get_index(
     """
     if files is not None and len(files) == 0:
         raise ValueError("Pass None for full repo index, or non-empty list of file paths.")
-    return await _query_index(
+    all_files = await _query_index(
         file_filter=files,
         dir_filter=dir_filter,
         package_filter=package_filter,
         query_filter=query_filter,
     )
+    total = len(all_files)
+    sliced = all_files[offset:offset + limit]
+    return {
+        "total": total,
+        "offset": offset,
+        "limit": limit,
+        "files": sliced,
+    }
 
 
-async def get_callers(symbol_name: str) -> list[CallEdge]:
+async def get_callers(
+    symbol_name: str,
+    file_filter: list[str] | None = None,
+    dir_filter: str | None = None,
+    package_filter: str | None = None,
+) -> list[CallEdge]:
     """
     Return all functions that call the given symbol.
     Use for impact analysis: "if I change this, what breaks?"
+    Supports optional file/dir/package filters on the caller side.
     """
     if not symbol_name or not symbol_name.strip():
         raise ValueError("symbol_name must be non-empty.")
-    edges = await _query_call_edges(symbol_filter=[symbol_name])
+    edges = await _query_call_edges(
+        symbol_filter=[symbol_name],
+        file_filter=file_filter,
+        dir_filter=dir_filter,
+        package_filter=package_filter,
+    )
     return [e for e in edges if e.callee_name == symbol_name]
 
 
-async def get_callees(symbol_name: str) -> list[CallEdge]:
+async def get_callees(
+    symbol_name: str,
+    file_filter: list[str] | None = None,
+    dir_filter: str | None = None,
+    package_filter: str | None = None,
+) -> list[CallEdge]:
     """
     Return all functions that the given symbol calls internally.
     Use to understand dependencies before reading body.
+    Supports optional file/dir/package filters on the caller side.
     """
     if not symbol_name or not symbol_name.strip():
-        raise ValueError("symbol_name must be nonexistent.")
-    edges = await _query_call_edges(symbol_filter=[symbol_name])
+        raise ValueError("symbol_name must be non-empty.")
+    edges = await _query_call_edges(
+        symbol_filter=[symbol_name],
+        file_filter=file_filter,
+        dir_filter=dir_filter,
+        package_filter=package_filter,
+    )
     return [e for e in edges if e.caller_name == symbol_name]
 
 
@@ -870,12 +940,410 @@ async def get_docstring(symbol_name: str, file: str | None = None) -> list[Docst
     return results
 
 
+# ---------------------------------------------------------------------------
+# Import dependency queries (imports table)
+# ---------------------------------------------------------------------------
+
+@dataclass
+class ImportInfo:
+    """A single import entry from a file."""
+    module: str
+    level: int
+    is_star: bool
+
+
+@dataclass
+class FileImports:
+    """All imports for a single file."""
+    file: str
+    imports: list[ImportInfo]
+
+
+@dataclass
+class ImporterInfo:
+    """A file that imports a given module."""
+    file: str
+    module: str
+    level: int
+    is_star: bool
+
+
+async def get_file_imports(file: str) -> FileImports:
+    """
+    Return all imports used by a file.
+
+    Use case: "What does this file depend on?"
+    Token cost: ~50-100 tokens
+    """
+    if not file or not file.strip():
+        raise ValueError("file must be non-empty.")
+
+    query_str = (
+        "SELECT i.module, i.level, i.is_star "
+        "FROM imports i "
+        "JOIN files f ON i.file_id = f.id "
+        "WHERE f.path = ? "
+        "ORDER BY i.module"
+    )
+
+    imports: list[ImportInfo] = []
+    async with get_db() as db:
+        async with db.execute(query_str, [file]) as cursor:
+            rows = await cursor.fetchall()
+            for r in rows:
+                imports.append(ImportInfo(
+                    module=r["module"],
+                    level=r["level"],
+                    is_star=bool(r["is_star"]),
+                ))
+
+    return FileImports(file=file, imports=imports)
+
+
+async def get_importers(module: str) -> list[ImporterInfo]:
+    """
+    Return all files that import a given module (reverse dependency lookup).
+
+    Use case: "Who uses this module?" / "What breaks if I change this?"
+    Token cost: ~100-200 tokens
+
+    Args:
+        module: Module name to search for (exact match or prefix).
+    """
+    if not module or not module.strip():
+        raise ValueError("module must be non-empty.")
+
+    # Use LIKE with prefix match to catch submodules
+    # e.g. searching "models" will also match "models.user", "models.task"
+    query_str = (
+        "SELECT f.path AS file, i.module, i.level, i.is_star "
+        "FROM imports i "
+        "JOIN files f ON i.file_id = f.id "
+        "WHERE i.module = ? OR i.module LIKE ? "
+        "ORDER BY f.path"
+    )
+
+    results: list[ImporterInfo] = []
+    async with get_db() as db:
+        async with db.execute(query_str, [module, module + ".%"]) as cursor:
+            rows = await cursor.fetchall()
+            for r in rows:
+                results.append(ImporterInfo(
+                    file=r["file"],
+                    module=r["module"],
+                    level=r["level"],
+                    is_star=bool(r["is_star"]),
+                ))
+
+    return results
+
+
+async def get_file_deps(file: str) -> dict:
+    """
+    Complete dependency picture for a file — both what it imports and what imports it.
+
+    Use case: Understand file dependencies in both directions.
+    Token cost: ~100-150 tokens
+    """
+    file_imports, _ = await asyncio.gather(
+        get_file_imports(file),
+        asyncio.sleep(0),  # placeholder to keep gather happy
+    )
+
+    # Get reverse dependencies: files that import modules defined in this file
+    # First, find what this file exports (symbols defined here)
+    query_str = (
+        "SELECT i.module "
+        "FROM imports i "
+        "JOIN files f ON i.file_id = f.id "
+        "WHERE f.path = ? "
+        "ORDER BY i.module"
+    )
+    imported_modules = []
+    async with get_db() as db:
+        async with db.execute(query_str, [file]) as cursor:
+            rows = await cursor.fetchall()
+            imported_modules = [r["module"] for r in rows]
+
+    # Find files that import any of the modules imported by this file
+    imported_by: list[ImporterInfo] = []
+    if imported_modules:
+        # Build a query to find reverse dependencies
+        # This is a simplified version - find files that share the same imports
+        reverse_query = (
+            "SELECT DISTINCT f.path AS file, i.module, i.level, i.is_star "
+            "FROM imports i "
+            "JOIN files f ON i.file_id = f.id "
+            "WHERE f.path != ? AND i.module IN ("
+            + ",".join("?" * len(imported_modules))
+            + ") "
+            "ORDER BY f.path"
+        )
+        params = [file] + imported_modules
+        async with get_db() as db:
+            async with db.execute(reverse_query, params) as cursor:
+                rows = await cursor.fetchall()
+                for r in rows:
+                    imported_by.append(ImporterInfo(
+                        file=r["file"],
+                        module=r["module"],
+                        level=r["level"],
+                        is_star=bool(r["is_star"]),
+                    ))
+
+    return {
+        "file": file,
+        "imports": [
+            {"module": imp.module, "level": imp.level, "is_star": imp.is_star}
+            for imp in file_imports.imports
+        ],
+        "imported_by": [
+            {"file": imp.file, "module": imp.module, "level": imp.level, "is_star": imp.is_star}
+            for imp in imported_by
+        ],
+    }
+
+
+async def get_type_info(symbol_name: str, file: str | None = None) -> dict:
+    """
+    Return parameter types and return type for a symbol.
+
+    Use case: "What type does this return?" — prevents API misuse.
+    Token cost: ~30-50 tokens
+    """
+    if not symbol_name or not symbol_name.strip():
+        raise ValueError("symbol_name must be non-empty.")
+
+    if file:
+        query_str = (
+            "SELECT s.name, t.param_name, t.annotation, t.is_return "
+            "FROM type_hints t "
+            "JOIN symbols s ON t.symbol_id = s.id "
+            "JOIN files f ON s.file_id = f.id "
+            "WHERE s.name = ? AND f.path = ? "
+            "ORDER BY t.param_name"
+        )
+        params: list = [symbol_name, file]
+    else:
+        query_str = (
+            "SELECT s.name, t.param_name, t.annotation, t.is_return "
+            "FROM type_hints t "
+            "JOIN symbols s ON t.symbol_id = s.id "
+            "WHERE s.name = ? "
+            "ORDER BY t.param_name"
+        )
+        params = [symbol_name]
+
+    params_dict: dict[str, str] = {}
+    returns: str | None = None
+    async with get_db() as db:
+        async with db.execute(query_str, params) as cursor:
+            rows = await cursor.fetchall()
+            for r in rows:
+                if r["is_return"]:
+                    returns = r["annotation"]
+                elif r["param_name"]:
+                    params_dict[r["param_name"]] = r["annotation"]
+
+    return {
+        "name": symbol_name,
+        "params": params_dict,
+        "returns": returns,
+    }
+
+
+async def get_defined_symbols(file: str) -> dict:
+    """
+    Quick file overview — what's defined in this file without full parse.
+
+    Use case: "What's defined in this file?"
+    Token cost: ~50-80 tokens
+    """
+    if not file or not file.strip():
+        raise ValueError("file must be non-empty.")
+
+    query_str = (
+        "SELECT s.name, s.kind "
+        "FROM symbols s "
+        "JOIN files f ON s.file_id = f.id "
+        "WHERE f.path = ? "
+        "ORDER BY s.kind, s.name"
+    )
+
+    functions: list[str] = []
+    classes: list[str] = []
+    methods: list[str] = []
+    constants: list[str] = []
+
+    async with get_db() as db:
+        async with db.execute(query_str, [file]) as cursor:
+            rows = await cursor.fetchall()
+            for r in rows:
+                name = r["name"]
+                kind = r["kind"]
+                if kind == "function":
+                    functions.append(name)
+                elif kind == "class":
+                    classes.append(name)
+                elif kind == "method":
+                    methods.append(name)
+                elif kind == "constant":
+                    constants.append(name)
+
+    return {
+        "file": file,
+        "functions": functions,
+        "classes": classes,
+        "methods": methods,
+        "constants": constants,
+    }
+
+
+async def count_references(symbol_name: str) -> dict:
+    """
+    Count how many times a symbol is referenced across the codebase.
+
+    Use case: Risk assessment before changes — "How widely is this used?"
+    Token cost: ~20-50 tokens
+    """
+    if not symbol_name or not symbol_name.strip():
+        raise ValueError("symbol_name must be non-empty.")
+
+    query_str = (
+        "SELECT COUNT(*) as cnt "
+        "FROM symbol_references r "
+        "JOIN symbols s ON r.symbol_id = s.id "
+        "WHERE s.name = ?"
+    )
+
+    count = 0
+    async with get_db() as db:
+        async with db.execute(query_str, [symbol_name]) as cursor:
+            row = await cursor.fetchone()
+            if row:
+                count = row["cnt"]
+
+    return {
+        "symbol": symbol_name,
+        "references": count,
+    }
+
+
+async def impact_analysis(symbol_name: str) -> dict:
+    """
+    Full impact assessment before changing a symbol.
+
+    Combines direct callers, symbol references, and affected files.
+    Use case: "If I change this, what breaks?"
+    Token cost: ~200-400 tokens
+    """
+    if not symbol_name or not symbol_name.strip():
+        raise ValueError("symbol_name must be non-empty.")
+
+    callers_query = (
+        "SELECT DISTINCT sc.name AS caller_name, fc.path AS caller_file "
+        "FROM call_edges ce "
+        "JOIN symbols sc ON ce.caller_id = sc.id "
+        "JOIN files fc ON sc.file_id = fc.id "
+        "WHERE ce.callee_name = ?"
+    )
+
+    refs_query = (
+        "SELECT DISTINCT f.path AS ref_file "
+        "FROM symbol_references r "
+        "JOIN symbols s ON r.symbol_id = s.id "
+        "JOIN files f ON r.file_id = f.id "
+        "WHERE s.name = ?"
+    )
+
+    direct_callers: list[dict] = []
+    affected_files: list[str] = []
+
+    async with get_db() as db:
+        async with db.execute(callers_query, [symbol_name]) as cursor:
+            rows = await cursor.fetchall()
+            for r in rows:
+                direct_callers.append({
+                    "name": r["caller_name"],
+                    "file": r["caller_file"],
+                })
+
+        async with db.execute(refs_query, [symbol_name]) as cursor:
+            rows = await cursor.fetchall()
+            affected_files = [r["ref_file"] for r in rows]
+
+    # Deduplicate files
+    affected_files = sorted(set(affected_files))
+
+    return {
+        "symbol": symbol_name,
+        "direct_callers": len(direct_callers),
+        "callers": direct_callers,
+        "affected_files": affected_files,
+    }
+
+
+async def trace_execution(symbol_name: str, max_depth: int = 5) -> dict:
+    """
+    Trace execution flow through the application from a given symbol.
+
+    Shows the call chain: who calls this, who calls those callers, etc.
+    Use case: "How does a request flow through the system?"
+    Token cost: ~200-500 tokens
+    """
+    if not symbol_name or not symbol_name.strip():
+        raise ValueError("symbol_name must be non-empty.")
+
+    visited: set[str] = set()
+    flow: list[dict] = []
+
+    async def _trace(name: str, depth: int, path: list[str]) -> None:
+        if depth > max_depth or name in visited:
+            return
+        visited.add(name)
+
+        query_str = (
+            "SELECT DISTINCT sc.name AS caller_name, fc.path AS caller_file, sc.line_start AS caller_line "
+            "FROM call_edges ce "
+            "JOIN symbols sc ON ce.caller_id = sc.id "
+            "JOIN files fc ON sc.file_id = fc.id "
+            "WHERE ce.callee_name = ?"
+        )
+
+        async with get_db() as db:
+            async with db.execute(query_str, [name]) as cursor:
+                rows = await cursor.fetchall()
+                for r in rows:
+                    caller_name = r["caller_name"]
+                    if caller_name not in visited:
+                        new_path = path + [f"{caller_name}() -> {name}()"]
+                        flow.append({
+                            "caller": caller_name,
+                            "callee": name,
+                            "caller_file": r["caller_file"],
+                            "caller_line": r["caller_line"],
+                            "depth": depth,
+                            "chain": " -> ".join(new_path),
+                        })
+                        await _trace(caller_name, depth + 1, new_path)
+
+    await _trace(symbol_name, 1, [f"{symbol_name}()"])
+
+    return {
+        "symbol": symbol_name,
+        "max_depth": max_depth,
+        "flow": flow,
+    }
+
+
 async def get_repo_overview(
     files: list[str] | None = None,
     dir_filter: str | None = None,
     package_filter: str | None = None,
     query_filter: str | None = None,
-) -> RepoOverview:
+    limit: int = 50,
+    offset: int = 0,
+) -> dict:
     """
     Single call that gives complete mental model of repo.
 
@@ -890,6 +1358,10 @@ async def get_repo_overview(
         package_filter: Package path — files in this package.
         query_filter:   Substring match on file path.
 
+    Pagination:
+        limit:  Max number of files to return (default: 50).
+        offset: Number of files to skip (default: 0).
+
     Token cost: ~15-30k for full repo (200 files, 1000 symbols, 3000 edges)
               or ~500 tokens for single file
     """
@@ -897,7 +1369,7 @@ async def get_repo_overview(
         raise ValueError("Pass None for full repo, or non-empty list of file paths.")
 
     # Run index query concurrently with call edges
-    file_index, all_edges = await asyncio.gather(
+    all_files, all_edges = await asyncio.gather(
         _query_index(
             file_filter=files,
             dir_filter=dir_filter,
@@ -907,21 +1379,139 @@ async def get_repo_overview(
         _query_call_edges(symbol_filter=None),
     )
 
-    # Build set of files in the filtered index for edge filtering
-    filtered_files = {fi.file for fi in file_index}
+    total_files = len(all_files)
+    sliced_files = all_files[offset:offset + limit]
+    sliced_file_set = {fi.file for fi in sliced_files}
 
     # Filter edges to only include those touching files in the result set
-    if filtered_files:
-        all_edges = [
-            e for e in all_edges
-            if e.caller_file in filtered_files or (e.callee_file and e.callee_file in filtered_files)
-        ]
+    has_filters = any([files, dir_filter, package_filter, query_filter])
+    if has_filters:
+        if sliced_file_set:
+            all_edges = [
+                e for e in all_edges
+                if e.caller_file in sliced_file_set or (e.callee_file and e.callee_file in sliced_file_set)
+            ]
+        else:
+            all_edges = []
 
     callees, callers = _build_lookup_maps(all_edges)
 
-    return RepoOverview(
-        files=file_index,
-        edges=all_edges,
-        callees=callees,
+    return {
+        "total_files": total_files,
+        "offset": offset,
+        "limit": limit,
+        "files": sliced_files,
+        "edges": all_edges,
+        "callees": callees,
+        "callers": callers,
+    }
+
+
+@dataclass
+class EditContext:
+    file: str
+    symbol_name: str
+    kind: str
+    line_start: int
+    line_end: int
+    total_file_lines: int
+    preamble: str
+    source: str
+    signature: str
+    callers: list[str]
+    callees: list[str]
+    imports: list[str]
+
+
+async def get_edit_context(
+    symbol_name: str,
+    file: str | None = None,
+    dir_filter: str | None = None,
+    package_filter: str | None = None,
+) -> EditContext | list[dict]:
+    """
+    Get all structured context required to edit a symbol without reading the whole file.
+    If multiple symbols match, returns a list of candidate details for disambiguation.
+    """
+    if not symbol_name or not symbol_name.strip():
+        raise ValueError("symbol_name must be non-empty.")
+
+    # Search for the symbol using filters
+    matching_symbols = await search_symbol(
+        name=symbol_name,
+        file_filter=[file] if file else None,
+        dir_filter=dir_filter,
+        package_filter=package_filter,
+    )
+
+    # Filter to exact name matches first to avoid prefix/substring matches if an exact match exists
+    exact_matches = [s for s in matching_symbols if s.name == symbol_name]
+    candidates = exact_matches if exact_matches else matching_symbols
+
+    if not candidates:
+        raise ValueError(f"Symbol '{symbol_name}' not found with the specified filters.")
+
+    if len(candidates) > 1:
+        # Return candidates to let the client disambiguate
+        return [
+            {
+                "file": c.file,
+                "kind": c.kind,
+                "line_start": c.line_start,
+                "line_end": c.line_end,
+            }
+            for c in candidates
+        ]
+
+    target = candidates[0]
+    repo_root = Path(os.getenv("REPO_PATH", ".")).resolve()
+    target_file = str((repo_root / target.file).resolve())
+
+    # 1. Total lines in file
+    total_lines = await asyncio.to_thread(_count_file_lines, target_file)
+
+    # 2. Read actual source lines of the symbol
+    source_lines = await asyncio.to_thread(_read_lines, target_file, target.line_start, target.line_end)
+    source = "\n".join(source_lines)
+
+    # 3. Read preamble (decorators/comments up to 3 lines above start line)
+    preamble = ""
+    if target.line_start > 1:
+        preamble_start = max(1, target.line_start - 3)
+        preamble_end = target.line_start - 1
+        preamble_lines = await asyncio.to_thread(_read_lines, target_file, preamble_start, preamble_end)
+        preamble = "\n".join(preamble_lines)
+
+    # 4. Signature + Docstring
+    signature = _extract_signature_and_docstring(source_lines)
+
+    # 5. Callers
+    callers_data = await get_callers(symbol_name, file_filter=[target_file])
+    callers = sorted(list({c.caller_name for c in callers_data}))
+
+    # 6. Callees
+    callees_data = await get_callees(symbol_name, file_filter=[target_file])
+    callees = sorted(list({c.callee_name for c in callees_data}))
+
+    # 7. File imports
+    try:
+        imports_data = await get_file_imports(target_file)
+        # Reconstruct simple import strings or return module names
+        imports = [imp.module for imp in imports_data.imports]
+    except Exception:
+        imports = []
+
+    return EditContext(
+        file=target_file,
+        symbol_name=target.name,
+        kind=target.kind,
+        line_start=target.line_start,
+        line_end=target.line_end,
+        total_file_lines=total_lines,
+        preamble=preamble,
+        source=source,
+        signature=signature,
         callers=callers,
+        callees=callees,
+        imports=imports,
     )
