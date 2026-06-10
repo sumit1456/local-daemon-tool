@@ -320,6 +320,11 @@ def _get(endpoint: str, **params) -> object:
     try:
         with urllib.request.urlopen(BASE + url, timeout=15) as r:
             return json.loads(r.read())
+    except urllib.error.HTTPError as e:
+        if e.code == 300:
+            return json.loads(e.read())
+        err = json.loads(e.read()).get("detail", e.reason)
+        _die(f"API error {e.code}: {err}")
     except urllib.error.URLError as e:
         _die(f"Cannot reach the Code Search Engine at {BASE}.\n"
              f"Start it first: .venv\\Scripts\\pythonw.exe launcher.pyw\n"
