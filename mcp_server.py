@@ -14,11 +14,35 @@ Usage (how you configure your agent to use this):
 """
 
 import asyncio
+import sys
+import logging
 import httpx
 from mcp.server.fastmcp import FastMCP
+from pathlib import Path
+from datetime import datetime
+
+LOG_DIR = Path(__file__).parent / "logs"
+LOG_DIR.mkdir(exist_ok=True)
+LOG_FILE = LOG_DIR / "mcp_server.log"
+
+logging.basicConfig(
+    level=logging.DEBUG,
+    format="%(asctime)s [%(levelname)s] %(message)s",
+    handlers=[
+        logging.FileHandler(LOG_FILE, encoding="utf-8"),
+        logging.StreamHandler(sys.stderr),
+    ],
+)
+log = logging.getLogger("mcp_server")
 
 DAEMON_BASE = "http://127.0.0.1:8000"
 TIMEOUT = 30.0
+
+log.info("=" * 60)
+log.info("MCP Server starting — PID %s", __import__("os").getpid())
+log.info("Log file: %s", LOG_FILE)
+log.info("Daemon target: %s", DAEMON_BASE)
+log.info("=" * 60)
 
 mcp = FastMCP("CodeSearchEngine")
 
@@ -28,16 +52,20 @@ mcp = FastMCP("CodeSearchEngine")
 async def _get(endpoint: str, **params) -> dict:
     """Make a GET request to the local daemon."""
     filtered = {k: v for k, v in params.items() if v is not None}
+    log.debug("GET %s %s", endpoint, filtered)
     async with httpx.AsyncClient(base_url=DAEMON_BASE, timeout=TIMEOUT) as client:
         r = await client.get(endpoint, params=filtered)
+        log.debug("GET %s -> %s (%dms)", endpoint, r.status_code, r.elapsed.total_seconds() * 1000)
         r.raise_for_status()
         return r.json()
 
 
 async def _post(endpoint: str, body: dict) -> dict:
     """Make a POST request to the local daemon."""
+    log.debug("POST %s %s", endpoint, {k: v[:80] if isinstance(v, str) and len(v) > 80 else v for k, v in body.items()})
     async with httpx.AsyncClient(base_url=DAEMON_BASE, timeout=TIMEOUT) as client:
         r = await client.post(endpoint, json=body)
+        log.debug("POST %s -> %s (%dms)", endpoint, r.status_code, r.elapsed.total_seconds() * 1000)
         r.raise_for_status()
         return r.json()
 
@@ -47,11 +75,14 @@ async def _post(endpoint: str, body: dict) -> dict:
 @mcp.tool()
 async def ping() -> dict:
     """Check if the Code Search Engine daemon is running and healthy."""
+    log.info("[ping] Checking daemon...")
     try:
         async with httpx.AsyncClient(base_url=DAEMON_BASE, timeout=3.0) as client:
             await client.get("/docs")
+        log.info("[ping] Daemon OK")
         return {"status": "ok", "url": DAEMON_BASE}
-    except Exception:
+    except Exception as e:
+        log.error("[ping] Daemon offline: %s", e)
         return {
             "status": "offline",
             "message": "Daemon not running. Start it with: .venv\\Scripts\\pythonw.exe launcher.pyw"
@@ -202,27 +233,51 @@ async def undo_edit() -> dict:
 
 
 @mcp.tool()
-async def get_index(files: list[str] | None = None) -> dict:
+async def get_index(
+    files: list[str] | None = None,
+    dir: str | None = None,
+    package: str | None = None,
+    q: str | None = None,
+    limit: int = 50,
+    offset: int = 0,
+) -> dict:
     """
     Get the file and symbol index for the repository. Cheap — no file reads.
     Provides a high-level map of what's in the codebase.
 
     Args:
         files: Optional list of specific files to scope the index to. Omit for the full repo.
+        dir: Directory prefix filter (e.g. "src/core").
+        package: Package path filter (e.g. "codeengine.core").
+        q: Substring match on file path.
+        limit: Max number of files to return (default: 50).
+        offset: Number of files to skip for pagination (default: 0).
     """
-    return await _get("/search/index", files=files)
+    return await _get("/search/index", files=files, dir=dir, package=package, q=q, limit=limit, offset=offset)
 
 
 @mcp.tool()
-async def get_overview(files: list[str] | None = None) -> dict:
+async def get_overview(
+    files: list[str] | None = None,
+    dir: str | None = None,
+    package: str | None = None,
+    q: str | None = None,
+    limit: int = 50,
+    offset: int = 0,
+) -> dict:
     """
     Get a full repository overview including the symbol call graph.
     Useful for understanding the architecture of a codebase before making changes.
 
     Args:
         files: Optional list of specific files to scope the overview to. Omit for the full repo.
+        dir: Directory prefix filter (e.g. "src/core").
+        package: Package path filter (e.g. "codeengine.core").
+        q: Substring match on file path.
+        limit: Max number of files to return (default: 50).
+        offset: Number of files to skip for pagination (default: 0).
     """
-    return await _get("/search/overview", files=files)
+    return await _get("/search/overview", files=files, dir=dir, package=package, q=q, limit=limit, offset=offset)
 
 
 @mcp.tool()
@@ -369,7 +424,140 @@ async def parse_blocks(
     })
 
 
+@mcp.tool()
+async def get_imports(file: str) -> dict:
+    """
+    Get all imports used by a file.
+    Helps agents understand dependencies without reading the file.
+
+    Args:
+        file: Relative path to the file (e.g. "services/user_service.py").
+    """
+    return await _get("/search/imports", file=file)
+
+
+@mcp.tool()
+async def get_importers(module: str) -> dict:
+    """
+    Reverse dependency lookup — find all files that import a given module.
+    Use this to understand the blast radius before changing a module.
+
+    Args:
+        module: Module name to search for (e.g. "utils.auth", "models.user").
+    """
+    return await _get("/search/importers", module=module)
+
+
+@mcp.tool()
+async def get_file_deps(file: str) -> dict:
+    """
+    Get complete dependency picture for a file — both what it imports and what imports it.
+    Useful for understanding file dependencies in both directions.
+
+    Args:
+        file: Relative path to the file (e.g. "codeengine/core/search.py").
+    """
+    return await _get("/search/file-deps", file=file)
+
+
+@mcp.tool()
+async def get_type_info(symbol_name: str, file: str | None = None) -> dict:
+    """
+    Return parameter types and return type for a symbol.
+    Prevents API misuse by showing type signatures.
+
+    Args:
+        symbol_name: Name of the function/class to get type info for.
+        file: Optional file path filter to narrow results.
+    """
+    return await _get("/search/type-info", symbol_name=symbol_name, file=file)
+
+
+@mcp.tool()
+async def get_defined_symbols(file: str) -> dict:
+    """
+    Get all symbols defined in a file — functions, classes, methods, constants.
+    Quick file overview without reading the full file.
+
+    Args:
+        file: Relative path to the file (e.g. "codeengine/core/search.py").
+    """
+    return await _get("/search/defined-symbols", file=file)
+
+
+@mcp.tool()
+async def count_references(symbol_name: str) -> dict:
+    """
+    Count how many times a symbol is referenced across the codebase.
+    Great for risk assessment before making changes.
+
+    Args:
+        symbol_name: Name of the symbol to count references for.
+    """
+    return await _get("/search/count-references", symbol_name=symbol_name)
+
+
+@mcp.tool()
+async def impact_analysis(symbol_name: str) -> dict:
+    """
+    Full impact assessment before changing a symbol.
+    Shows direct callers, all references, and affected files.
+
+    Args:
+        symbol_name: Name of the symbol to analyze impact for.
+    """
+    return await _get("/search/impact-analysis", symbol_name=symbol_name)
+
+
+@mcp.tool()
+async def trace_execution(symbol_name: str, max_depth: int = 5) -> dict:
+    """
+    Trace execution flow through the application from a given symbol.
+    Shows the call chain: who calls this, who calls those callers, etc.
+
+    Args:
+        symbol_name: Name of the symbol to trace execution from.
+        max_depth: Maximum call chain depth (default: 5).
+    """
+    return await _get("/search/trace-execution", symbol_name=symbol_name, max_depth=max_depth)
+
+
+@mcp.tool()
+async def get_edit_context(
+    symbol: str,
+    file: str | None = None,
+    dir: str | None = None,
+    package: str | None = None,
+) -> dict:
+    """
+    Get all structured context required to edit a symbol without reading the whole file.
+    If multiple symbols match, returns candidate details for disambiguation.
+
+    Args:
+        symbol: The name of the function, class, or method to get context for.
+        file: Optional relative path filter (e.g. "codeengine/core/search.py").
+        dir: Optional directory prefix filter (e.g. "codeengine/core").
+        package: Optional package path filter (e.g. "codeengine.core").
+    """
+    log.info("[get_edit_context] symbol=%s file=%s dir=%s package=%s", symbol, file, dir, package)
+    try:
+        result = await _get("/search/edit-context", symbol=symbol, file=file, dir=dir, package=package)
+        log.info("[get_edit_context] OK — keys=%s", list(result.keys()) if isinstance(result, dict) else f"list({len(result)} items)")
+        return result
+    except httpx.HTTPStatusError as e:
+        if e.response.status_code == 300:
+            log.info("[get_edit_context] 300 Multiple Choices — %d candidates", len(e.response.json().get("candidates", [])))
+            return e.response.json()
+        log.error("[get_edit_context] HTTP %d: %s", e.response.status_code, e.response.text[:200])
+        raise e
+    except Exception as e:
+        log.error("[get_edit_context] Error: %s", e)
+        raise
+
+
 # ── Entry point ───────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
+    log.info("MCP Server ready, running stdio transport...")
     mcp.run(transport="stdio")
+
