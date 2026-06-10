@@ -1347,6 +1347,75 @@ async def trace_execution(symbol_name: str, max_depth: int = 5) -> dict:
     }
 
 
+def _build_overview_summary(all_files: list[FileIndex], all_edges: list[CallEdge]) -> dict:
+    """Build compact overview summary — index stats + edge stats in ~300 tokens."""
+    from collections import Counter
+
+    # Reuse index summary
+    index_summary = _build_index_summary(all_files)
+
+    # Edge stats
+    total_edges = len(all_edges)
+    unique_callers = set()
+    unique_callees = set()
+    file_edge_count: Counter = Counter()
+
+    for e in all_edges:
+        unique_callers.add(e.caller_name)
+        if e.callee_name:
+            unique_callees.add(e.callee_name)
+        file_edge_count[e.caller_file] += 1
+
+    # Top files by edge count (most connected / highest fan-out)
+    top_connected = [
+        {"file": f, "outgoing_calls": c}
+        for f, c in file_edge_count.most_common(10)
+    ]
+
+    # Top callers (most outgoing calls)
+    caller_count: Counter = Counter()
+    for e in all_edges:
+        caller_count[e.caller_name] += 1
+    top_callers = [
+        {"symbol": name, "calls": count}
+        for name, count in caller_count.most_common(10)
+    ]
+
+    # Top callees (most called / highest fan-in)
+    callee_count: Counter = Counter()
+    for e in all_edges:
+        if e.callee_name:
+            callee_count[e.callee_name] += 1
+    top_callees = [
+        {"symbol": name, "called_by": count}
+        for name, count in callee_count.most_common(10)
+    ]
+
+    # Files with most incoming calls (most depended on)
+    incoming: Counter = Counter()
+    for e in all_edges:
+        if e.callee_file:
+            incoming[e.callee_file] += 1
+    most_depended = [
+        {"file": f, "incoming_calls": c}
+        for f, c in incoming.most_common(10)
+    ]
+
+    return {
+        "mode": "summary",
+        **index_summary,
+        "call_graph": {
+            "total_edges": total_edges,
+            "unique_callers": len(unique_callers),
+            "unique_callees": len(unique_callees),
+            "top_connected_files": top_connected,
+            "most_depended_files": most_depended,
+            "top_callers": top_callers,
+            "top_callees": top_callees,
+        },
+    }
+
+
 async def get_repo_overview(
     files: list[str] | None = None,
     dir_filter: str | None = None,
