@@ -166,3 +166,19 @@ All commands return JSON to stdout. Errors go to stderr as JSON:
 ---
 
 *Code Search Engine CLI v2.0.0*
+
+======================================================================
+⚠ WARNING: SLOWER THAN NATIVE TOOLS
+The following CLI commands go through HTTP → FastAPI → ripgrep/AST.
+Use native tools first when possible — they are faster and cheaper.
+
+| CLI Command | Native Alternative | Why Native Is Better |
+|:------------|:-------------------|:---------------------|
+| `search "pattern"` | `grep_search` / `rg` | ~200 tokens vs ~500+ via CLI |
+| `file "pattern"` | `glob` / `fd` | ~50 tokens vs ~100+ via CLI |
+| `symbol "name"` | `grep` for `def/class` | Faster for simple lookups |
+
+**Rule of thumb**: If `grep` or `glob` can do it, use native. Only use CLI
+when you need AST-level precision (`function`, `class`, `signature`, `body`)
+or editing capabilities (`preview`, `apply`, `undo`, `edit-context`).
+======================================================================
