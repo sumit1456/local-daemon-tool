@@ -1464,14 +1464,15 @@ async def get_edit_context(
         ]
 
     target = candidates[0]
+    target_file = target.file
     repo_root = Path(os.getenv("REPO_PATH", ".")).resolve()
-    target_file = str((repo_root / target.file).resolve())
+    resolved_file = str((repo_root / target_file).resolve())
 
     # 1. Total lines in file
-    total_lines = await asyncio.to_thread(_count_file_lines, target_file)
+    total_lines = await asyncio.to_thread(_count_file_lines, resolved_file)
 
     # 2. Read actual source lines of the symbol
-    source_lines = await asyncio.to_thread(_read_lines, target_file, target.line_start, target.line_end)
+    source_lines = await asyncio.to_thread(_read_lines, resolved_file, target.line_start, target.line_end)
     source = "\n".join(source_lines)
 
     # 3. Read preamble (decorators/comments up to 3 lines above start line)
@@ -1479,7 +1480,7 @@ async def get_edit_context(
     if target.line_start > 1:
         preamble_start = max(1, target.line_start - 3)
         preamble_end = target.line_start - 1
-        preamble_lines = await asyncio.to_thread(_read_lines, target_file, preamble_start, preamble_end)
+        preamble_lines = await asyncio.to_thread(_read_lines, resolved_file, preamble_start, preamble_end)
         preamble = "\n".join(preamble_lines)
 
     # 4. Signature + Docstring
