@@ -1,9 +1,13 @@
-from fastapi import APIRouter, Query, HTTPException
+from fastapi import APIRouter, Query, HTTPException, status
+from fastapi.responses import JSONResponse
 from codeengine.core.search_engine import (
     search_code, search_symbol, find_file,
     get_index, get_callers, get_callees, get_repo_overview,
     get_function_signature, get_function_body,
     find_symbol_usages, get_docstring,
+    get_file_imports, get_importers, get_file_deps,
+    get_type_info, get_defined_symbols, count_references,
+    impact_analysis, trace_execution, get_edit_context,
 )
 from codeengine.core.ast_engine import get_function, get_class, parse_code_string
 from codeengine.models.search_models import SearchResponse, Symbol, FunctionResult
@@ -25,9 +29,16 @@ async def search_code_route(
     return SearchResponse(matches=matches, total=len(matches), query=q)
 
 @router.get("/symbol", response_model=list[Symbol])
-async def search_symbol_route(name: str, kind: str | None = None):
+async def search_symbol_route(
+    name: str,
+    kind: str | None = None,
+    file: str | None = Query(None, description="File path filter"),
+    dir: str | None = Query(None, description="Directory prefix filter"),
+    package: str | None = Query(None, description="Package path filter"),
+):
     """Search for matching symbols in the SQLite DB."""
-    return await search_symbol(name, kind)
+    file_filter = [file] if file else None
+    return await search_symbol(name, kind, file_filter=file_filter, dir_filter=dir, package_filter=package)
 
 @router.get("/file", response_model=list[str])
 async def find_file_route(pattern: str = Query("", description="file pattern"), root: str = Query(".", description="root path")):
@@ -75,6 +86,8 @@ async def get_index_route(
     dir: str | None = Query(None, description="Directory prefix filter"),
     package: str | None = Query(None, description="Package path filter"),
     q: str | None = Query(None, description="Substring match on file path"),
+    limit: int = Query(50, description="Max number of files to return"),
+    offset: int = Query(0, description="Number of files to skip"),
 ):
     """Get file and symbol index for the repository."""
     try:
@@ -83,23 +96,37 @@ async def get_index_route(
             dir_filter=dir,
             package_filter=package,
             query_filter=q,
+            limit=limit,
+            offset=offset,
         )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
-
 @router.get("/callers")
-async def get_callers_route(symbol_name: str = Query(...)):
+async def get_callers_route(
+    symbol_name: str = Query(...),
+    file: str | None = Query(None, description="File path filter"),
+    dir: str | None = Query(None, description="Directory prefix filter"),
+    package: str | None = Query(None, description="Package path filter"),
+):
     """Get all functions that call the given symbol."""
     try:
-        return await get_callers(symbol_name)
+        file_filter = [file] if file else None
+        return await get_callers(symbol_name, file_filter=file_filter, dir_filter=dir, package_filter=package)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
+
 @router.get("/callees")
-async def get_callees_route(symbol_name: str = Query(...)):
+async def get_callees_route(
+    symbol_name: str = Query(...),
+    file: str | None = Query(None, description="File path filter"),
+    dir: str | None = Query(None, description="Directory prefix filter"),
+    package: str | None = Query(None, description="Package path filter"),
+):
     """Get all functions called by the given symbol."""
     try:
-        return await get_callees(symbol_name)
+        file_filter = [file] if file else None
+        return await get_callees(symbol_name, file_filter=file_filter, dir_filter=dir, package_filter=package)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
@@ -109,6 +136,8 @@ async def get_overview_route(
     dir: str | None = Query(None, description="Directory prefix filter (e.g. 'src/core')"),
     package: str | None = Query(None, description="Package path filter (e.g. 'codeengine.core')"),
     q: str | None = Query(None, description="Substring match on file path"),
+    limit: int = Query(50, description="Max number of files to return"),
+    offset: int = Query(0, description="Number of files to skip"),
 ):
     """Get a complete overview of the repository including call edges."""
     try:
@@ -117,6 +146,8 @@ async def get_overview_route(
             dir_filter=dir,
             package_filter=package,
             query_filter=q,
+            limit=limit,
+            offset=offset,
         )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
@@ -157,6 +188,114 @@ async def get_docstring_route(symbol_name: str = Query(...), file: str | None = 
         return await get_docstring(symbol_name, file)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.get("/imports")
+async def get_imports_route(file: str = Query(..., description="Relative file path")):
+    """Get all imports used by a file."""
+    try:
+        return await get_file_imports(file)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.get("/importers")
+async def get_importers_route(module: str = Query(..., description="Module name to search for")):
+    """Get all files that import a given module (reverse dependency lookup)."""
+    try:
+        return await get_importers(module)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.get("/file-deps")
+async def get_file_deps_route(file: str = Query(..., description="Relative file path")):
+    """Get complete dependency picture for a file — both directions."""
+    try:
+        return await get_file_deps(file)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.get("/type-info")
+async def get_type_info_route(
+    symbol_name: str = Query(..., description="Symbol name to get type info for"),
+    file: str | None = Query(None, description="Optional file path filter"),
+):
+    """Get parameter types and return type for a symbol."""
+    try:
+        return await get_type_info(symbol_name, file)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.get("/defined-symbols")
+async def get_defined_symbols_route(file: str = Query(..., description="Relative file path")):
+    """Get all symbols defined in a file (functions, classes, methods, constants)."""
+    try:
+        return await get_defined_symbols(file)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.get("/count-references")
+async def count_references_route(symbol_name: str = Query(..., description="Symbol name")):
+    """Count how many times a symbol is referenced across the codebase."""
+    try:
+        return await count_references(symbol_name)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.get("/impact-analysis")
+async def impact_analysis_route(symbol_name: str = Query(..., description="Symbol name")):
+    """Full impact assessment — direct callers, references, and affected files."""
+    try:
+        return await impact_analysis(symbol_name)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.get("/trace-execution")
+async def trace_execution_route(
+    symbol_name: str = Query(..., description="Symbol name to trace"),
+    max_depth: int = Query(5, description="Maximum call chain depth"),
+):
+    """Trace execution flow through the application from a given symbol."""
+    try:
+        return await trace_execution(symbol_name, max_depth)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.get("/edit-context")
+async def get_edit_context_route(
+    symbol: str = Query(..., description="Symbol name to get context for"),
+    file: str | None = Query(None, description="Optional relative file path filter"),
+    dir: str | None = Query(None, description="Optional directory prefix filter"),
+    package: str | None = Query(None, description="Optional package path filter"),
+):
+    """Get all structured context required to edit a symbol without reading the whole file."""
+    try:
+        res = await get_edit_context(
+            symbol_name=symbol,
+            file=file,
+            dir_filter=dir,
+            package_filter=package,
+        )
+        if isinstance(res, list):
+            # Multiple candidates found - return 300 Multiple Choices
+            return JSONResponse(
+                status_code=status.HTTP_300_MULTIPLE_CHOICES,
+                content={
+                    "detail": f"Multiple symbols found matching '{symbol}'. Please specify a file.",
+                    "candidates": res
+                }
+            )
+        return res
+    except ValueError as e:
+        raise HTTPException(status_code=404 if "not found" in str(e) else 400, detail=str(e))
+
 
 
 class DetectOriginalRequest(BaseModel):

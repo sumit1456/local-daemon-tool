@@ -408,7 +408,7 @@ async def test_overview_with_dir_filter(temp_repo):
 
     # dir_filter with empty string matches all files (no prefix constraint)
     overview = await get_repo_overview(dir_filter="")
-    assert len(overview.files) == 1
+    assert len(overview["files"]) == 1
 
 
 @pytest.mark.asyncio
@@ -421,5 +421,5 @@ async def test_index_with_query_filter(temp_repo):
     assert indexed == 1
 
     result = await get_index(query_filter="test_file")
-    assert len(result) == 1
-    assert "test_file" in result[0].file
+    assert len(result["files"]) == 1
+    assert "test_file" in result["files"][0].file

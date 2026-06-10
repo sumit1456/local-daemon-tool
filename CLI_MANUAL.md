@@ -48,8 +48,8 @@ Daemon must be running:
 
 | Command | Args | Description |
 |:--------|:-----|:------------|
-| `index` | `[--files a.py b.py]` `[--dir src]` `[--package codeengine.core]` | File + symbol index |
-| `overview` | `[--files a.py b.py]` `[--dir src]` `[--package codeengine.core]` | Full overview with call graph |
+| `index` | `[--files a.py b.py]` `[--dir src]` `[--package codeengine.core]` | File + symbol index. No filters = compact summary. |
+| `overview` | `[--files a.py b.py]` `[--dir src]` `[--package codeengine.core]` | Full overview with call graph. No filters = compact summary. |
 | `callers` | `"symbol_name"` `[--dir src]` `[--package codeengine.core]` | Who calls this function? |
 | `callees` | `"symbol_name"` `[--dir src]` `[--package codeengine.core]` | What does this function call? |
 
@@ -86,6 +86,8 @@ Daemon must be running:
 | `preview-smart` | `"file.py" "new_code"` | Smart edit — engine detects what to replace |
 | `apply-smart` | `"edit_id"` | Apply smart edit + git commit |
 | `undo` | — | Revert last edit (`git revert HEAD`) |
+
+> **Note on undo**: `undo` uses `git revert`. If an edit was the first commit for a new file, reverting deletes the file. The engine now auto-commits untracked files before the first edit to prevent this.
 
 ### Code Analysis
 

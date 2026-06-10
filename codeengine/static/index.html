@@ -1035,6 +1035,49 @@
       font-family: var(--font-mono); font-size: 11.5px; line-height: 1.65;
       background: #0a0c10;
     }
+    /* ── SYMBOL CHIPS ── */
+    .symbol-chip {
+      display: inline-flex; align-items: center; gap: 5px;
+      padding: 4px 10px; border-radius: 99px;
+      background: var(--bg-elevated);
+      border: 1px solid var(--border-mid);
+      color: var(--text-secondary);
+      font-size: 12px; font-family: var(--font-mono);
+      cursor: pointer; transition: var(--transition);
+      white-space: nowrap;
+    }
+    .symbol-chip:hover {
+      background: var(--accent-glow);
+      border-color: var(--border-accent);
+      color: var(--accent-bright);
+    }
+    .symbol-chip .chip-kind {
+      font-size: 9px; font-weight: 700; letter-spacing: 0.06em;
+      text-transform: uppercase; opacity: 0.7;
+    }
+
+    /* ── SUMMARY STAT CARDS ── */
+    .summary-stats {
+      display: flex; gap: 10px; margin-bottom: 16px; flex-wrap: wrap;
+    }
+    .summary-stat {
+      display: flex; align-items: center; gap: 8px;
+      padding: 10px 16px;
+      background: var(--bg-surface);
+      border: 1px solid var(--border-subtle);
+      border-radius: var(--radius-md);
+      min-width: 120px;
+    }
+    .summary-stat .stat-icon { font-size: 20px; }
+    .summary-stat .stat-value {
+      font-size: 18px; font-weight: 700; color: var(--text-primary);
+      font-family: var(--font-mono);
+    }
+    .summary-stat .stat-label {
+      font-size: 11px; color: var(--text-muted); text-transform: uppercase;
+      letter-spacing: 0.06em;
+    }
+
   </style>
 </head>
 <body>
@@ -1090,6 +1133,9 @@
       </div>
       <div class="nav-item" data-page="call-graph" id="nav-call-graph">
         <span class="nav-icon">🔗</span> Call Graph
+      </div>
+      <div class="nav-item" data-page="import-graph" id="nav-import-graph">
+        <span class="nav-icon">📦</span> Import Graph
       </div>
       <div class="nav-item" data-page="function-extract" id="nav-function-extract">
         <span class="nav-icon">⚡</span> Function Extract
@@ -1333,6 +1379,14 @@
               <span class="search-icon">⌕</span>
               <input id="idx-files" type="text" placeholder="Filter by files (comma-separated, optional)" />
             </div>
+            <div class="search-input-wrap" style="max-width:180px">
+              <span class="search-icon">📁</span>
+              <input id="idx-dir" type="text" placeholder="Dir (e.g. src/core)" />
+            </div>
+            <div class="search-input-wrap" style="max-width:180px">
+              <span class="search-icon">📦</span>
+              <input id="idx-package" type="text" placeholder="Package (e.g. codeengine)" />
+            </div>
             <button class="btn btn-primary" id="idx-load-btn">Load Index</button>
           </div>
         </div>
@@ -1340,7 +1394,7 @@
           <div class="empty-state">
             <div class="empty-icon">📋</div>
             <div class="empty-title">Repository Index</div>
-            <div class="empty-sub">Load the file and symbol index to see all indexed files and their symbols.</div>
+            <div class="empty-sub">Loading index…</div>
           </div>
         </div>
       </section>
@@ -1354,6 +1408,14 @@
               <span class="search-icon">⌕</span>
               <input id="ov-files" type="text" placeholder="Filter by files (comma-separated, optional)" />
             </div>
+            <div class="search-input-wrap" style="max-width:180px">
+              <span class="search-icon">📁</span>
+              <input id="ov-dir" type="text" placeholder="Dir (e.g. src/core)" />
+            </div>
+            <div class="search-input-wrap" style="max-width:180px">
+              <span class="search-icon">📦</span>
+              <input id="ov-package" type="text" placeholder="Package (e.g. codeengine)" />
+            </div>
             <button class="btn btn-primary" id="ov-load-btn">Load Overview</button>
           </div>
         </div>
@@ -1361,7 +1423,7 @@
           <div class="empty-state">
             <div class="empty-icon">🗺</div>
             <div class="empty-title">Call Graph Overview</div>
-            <div class="empty-sub">Load the repository overview to see call relationships between functions.</div>
+            <div class="empty-sub">Loading overview…</div>
           </div>
         </div>
       </section>
@@ -1375,15 +1437,62 @@
               <span class="search-icon">⌕</span>
               <input id="cg-symbol" type="text" placeholder="Symbol name (e.g. normalize_layout)" />
             </div>
+            <div class="search-input-wrap" style="max-width:160px">
+              <span class="search-icon">📁</span>
+              <input id="cg-dir" type="text" placeholder="Dir filter" />
+            </div>
+            <div class="search-input-wrap" style="max-width:160px">
+              <span class="search-icon">📦</span>
+              <input id="cg-package" type="text" placeholder="Package filter" />
+            </div>
             <button class="btn btn-primary" id="cg-callers-btn">Who Calls This?</button>
             <button class="btn btn-secondary" id="cg-callees-btn">What Does This Call?</button>
           </div>
+          <div id="cg-symbol-chips" style="display:flex;flex-wrap:wrap;gap:6px;margin-top:10px;"></div>
         </div>
         <div class="results-area" id="cg-results">
           <div class="empty-state">
             <div class="empty-icon">🔗</div>
             <div class="empty-title">Call Relationships</div>
-            <div class="empty-sub">Enter a symbol name to see who calls it or what it calls.</div>
+            <div class="empty-sub">Enter a symbol name above or click a suggestion to explore call relationships.</div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ════ IMPORT GRAPH PAGE ════ -->
+      <section class="page" id="page-import-graph">
+        <div class="page-header">
+          <div class="page-title">📦 Import Graph</div>
+          <div class="search-row" style="gap:10px">
+            <div class="mode-toggle" id="import-mode-toggle">
+              <button class="mode-btn active" data-mode="file-imports">File Imports</button>
+              <button class="mode-btn" data-mode="module-importers">Module Importers</button>
+            </div>
+          </div>
+          <!-- File Imports mode -->
+          <div class="search-row" id="import-file-row" style="margin-top:10px">
+            <div class="search-input-wrap" style="flex:2">
+              <span class="search-icon">📄</span>
+              <input id="ig-file" type="text" placeholder="Relative file path (e.g. codeengine/core/search.py)" list="ig-file-list" />
+              <datalist id="ig-file-list"></datalist>
+            </div>
+            <button class="btn btn-primary" id="ig-file-btn">Show Imports</button>
+            <button class="btn btn-secondary" id="ig-file-deps-btn">Full Deps</button>
+          </div>
+          <!-- Module Importers mode -->
+          <div class="search-row" id="import-module-row" style="margin-top:10px;display:none">
+            <div class="search-input-wrap" style="flex:2">
+              <span class="search-icon">📦</span>
+              <input id="ig-module" type="text" placeholder="Module name (e.g. codeengine.database.sqlite)" />
+            </div>
+            <button class="btn btn-primary" id="ig-module-btn">Who Imports This?</button>
+          </div>
+        </div>
+        <div class="results-area" id="ig-results">
+          <div class="empty-state">
+            <div class="empty-icon">📦</div>
+            <div class="empty-title">Import Dependency Graph</div>
+            <div class="empty-sub">Enter a file path to see what it imports, or a module name to see who imports it.</div>
           </div>
         </div>
       </section>
@@ -1395,7 +1504,8 @@
           <div class="search-row">
             <div class="search-input-wrap" style="flex:2">
               <span class="search-icon">📄</span>
-              <input id="fe-file" type="text" placeholder="Relative file path (e.g. codeengine/app.py)" />
+              <input id="fe-file" type="text" placeholder="Relative file path (e.g. codeengine/app.py)" list="fe-file-list" />
+              <datalist id="fe-file-list"></datalist>
             </div>
             <div class="search-input-wrap">
               <span class="search-icon">📍</span>
@@ -1415,7 +1525,7 @@
           <div class="empty-state">
             <div class="empty-icon">⚡</div>
             <div class="empty-title">Function Extraction</div>
-            <div class="empty-sub">Enter file path and line range to extract function signature or body.</div>
+            <div class="empty-sub">Enter file path and line range, or click a symbol from search results to auto-fill.</div>
           </div>
         </div>
       </section>

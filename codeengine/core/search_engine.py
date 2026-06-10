@@ -365,7 +365,7 @@ async def search_symbol(
         params.append(prefix + "%")
 
     if package_filter:
-        pkg = package_filter.rstrip("/").replace("\\", "/")
+        pkg = package_filter.replace(".", "/").rstrip("/").replace("\\", "/")
         query_str += " AND (f.path LIKE ? OR f.path LIKE ?)"
         params.append(pkg + "/%")
         params.append("%/" + pkg + "/%")
@@ -688,7 +688,7 @@ async def _query_call_edges(
         params.append(prefix + "%")
 
     if package_filter:
-        pkg = package_filter.rstrip("/").replace("\\", "/")
+        pkg = package_filter.replace(".", "/").rstrip("/").replace("\\", "/")
         conditions.append("(fc.path LIKE ? OR fc.path LIKE ?)")
         params.append(pkg + "/%")
         params.append("%/" + pkg + "/%")
@@ -744,6 +744,126 @@ def _build_lookup_maps(edges: list[CallEdge]) -> tuple[dict[str, list[str]], dic
     return callees, callers
 
 
+def _build_index_summary(all_files: list[FileIndex]) -> dict:
+    """Build compact summary from full file index — no symbol names, just counts."""
+    from collections import Counter
+
+    total_files = len(all_files)
+    total_symbols = sum(len(f.symbols) for f in all_files)
+
+    ext_map = {
+        ".py": "python", ".js": "javascript", ".ts": "typescript",
+        ".jsx": "javascript", ".tsx": "typescript", ".go": "go",
+        ".rs": "rust", ".java": "java", ".sql": "sql",
+        ".html": "html", ".css": "css", ".json": "json",
+        ".yaml": "yaml", ".yml": "yaml", ".md": "markdown",
+        ".toml": "toml", ".sh": "shell",
+    }
+    lang_counter: Counter = Counter()
+    for f in all_files:
+        ext = "." + f.file.rsplit(".", 1)[-1] if "." in f.file else ""
+        lang_counter[ext_map.get(ext, ext.lstrip(".") or "unknown")] += 1
+
+    dir_stats: dict[str, dict] = {}
+    for f in all_files:
+        parts = f.file.replace("\\", "/").split("/")
+        top_dir = parts[0] if len(parts) > 1 else "."
+        if top_dir not in dir_stats:
+            dir_stats[top_dir] = {"files": 0, "symbols": 0}
+        dir_stats[top_dir]["files"] += 1
+        dir_stats[top_dir]["symbols"] += len(f.symbols)
+
+    top_dirs = sorted(
+        [{"path": k, **v} for k, v in dir_stats.items()],
+        key=lambda x: x["symbols"],
+        reverse=True,
+    )
+
+    top_files = sorted(
+        [{"file": f.file, "symbols": len(f.symbols)} for f in all_files],
+        key=lambda x: x["symbols"],
+        reverse=True,
+    )[:10]
+
+    kind_counter: Counter = Counter()
+    for f in all_files:
+        for s in f.symbols:
+            kind_counter[s.kind] += 1
+
+    return {
+        "mode": "summary",
+        "total_files": total_files,
+        "total_symbols": total_symbols,
+        "languages": dict(lang_counter.most_common()),
+        "symbol_kinds": dict(kind_counter.most_common()),
+        "top_dirs": top_dirs,
+        "top_files": top_files,
+    }
+
+
+def _build_overview_summary(all_files: list[FileIndex], all_edges: list[CallEdge]) -> dict:
+    """Build compact overview summary — index stats + edge stats."""
+    from collections import Counter
+
+    index_summary = _build_index_summary(all_files)
+
+    total_edges = len(all_edges)
+    unique_callers = set()
+    unique_callees = set()
+    file_edge_count: Counter = Counter()
+
+    for e in all_edges:
+        unique_callers.add(e.caller_name)
+        if e.callee_name:
+            unique_callees.add(e.callee_name)
+        file_edge_count[e.caller_file] += 1
+
+    top_connected = [
+        {"file": f, "outgoing_calls": c}
+        for f, c in file_edge_count.most_common(10)
+    ]
+
+    caller_count: Counter = Counter()
+    for e in all_edges:
+        caller_count[e.caller_name] += 1
+    top_callers = [
+        {"symbol": name, "calls": count}
+        for name, count in caller_count.most_common(10)
+    ]
+
+    callee_count: Counter = Counter()
+    for e in all_edges:
+        if e.callee_name:
+            callee_count[e.callee_name] += 1
+    top_callees = [
+        {"symbol": name, "called_by": count}
+        for name, count in callee_count.most_common(10)
+    ]
+
+    incoming: Counter = Counter()
+    for e in all_edges:
+        if e.callee_file:
+            incoming[e.callee_file] += 1
+    most_depended = [
+        {"file": f, "incoming_calls": c}
+        for f, c in incoming.most_common(10)
+    ]
+
+    return {
+        "mode": "summary",
+        **index_summary,
+        "call_graph": {
+            "total_edges": total_edges,
+            "unique_callers": len(unique_callers),
+            "unique_callees": len(unique_callees),
+            "top_connected_files": top_connected,
+            "most_depended_files": most_depended,
+            "top_callers": top_callers,
+            "top_callees": top_callees,
+        },
+    }
+
+
 async def get_index(
     files: list[str] | None = None,
     dir_filter: str | None = None,
@@ -767,7 +887,7 @@ async def get_index(
         5. get_function_body(...) - full body if needed (~300 tokens)
     """
     if files is not None and len(files) == 0:
-        raise ValueError("Pass None for full repo index, or non-empty list of file paths.")
+        files = None
 
     has_filters = any([files, dir_filter, package_filter, query_filter])
 

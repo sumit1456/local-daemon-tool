@@ -345,6 +345,36 @@ def parse_blocks_from_code(
         list of (kind, name, source_text) tuples where kind is one of:
         "function" | "class" | "import" | "constant" | "other"
     """
+    # Detect if we have separators in the code
+    import re
+    separator_pat = re.compile(r"^\s*[-=]{5,}\s*$")
+    
+    # Check if any line matches separator
+    has_separator = False
+    for line in source_code.splitlines():
+        if separator_pat.match(line):
+            has_separator = True
+            break
+
+    if has_separator:
+        chunks = []
+        current_chunk = []
+        for line in source_code.splitlines(keepends=True):
+            if separator_pat.match(line):
+                if current_chunk:
+                    chunks.append("".join(current_chunk))
+                    current_chunk = []
+            else:
+                current_chunk.append(line)
+        if current_chunk:
+            chunks.append("".join(current_chunk))
+
+        all_blocks = []
+        for chunk in chunks:
+            if chunk.strip():
+                all_blocks.extend(parse_blocks_from_code(chunk, file_path_hint, lang_hint))
+        return all_blocks
+
     # Detect language
     lang = lang_hint
     if not lang and file_path_hint:
@@ -428,6 +458,84 @@ def parse_blocks_from_code(
                 blocks.append(("other", None, src))
 
     return blocks
+
+
+def find_symbol_bounds_in_code(
+    code: str,
+    name: str,
+    kind: str,
+    file_path_hint: str | None = None,
+    lang_hint: str | None = None,
+) -> tuple[int, int] | None:
+    """
+    Find the 0-indexed start and end line bounds (exclusive) of a symbol
+    in the given code string using tree-sitter.
+    """
+    lang = lang_hint
+    if not lang and file_path_hint:
+        lang = detect_language(file_path_hint)
+    if not lang:
+        src = code.encode("utf-8", errors="replace")
+        if b"fn " in src and (b"impl " in src or b"pub " in src):
+            lang = "rust"
+        elif b"func " in src:
+            lang = "go"
+        elif b"def " in src or (b"import " in src and b":" in src):
+            lang = "python"
+        elif b"class " in src and (b"public " in src or b"private " in src or b"void " in src):
+            lang = "java"
+        elif b"const " in src or b"let " in src or b"function " in src or b"=>" in src:
+            lang = "javascript"
+        else:
+            lang = "python"
+
+    if lang not in PARSERS:
+        lang = "python"
+
+    source_bytes = code.encode("utf-8", errors="replace")
+    parser = PARSERS[lang]
+    local_parser = Parser(parser.language)
+    tree = local_parser.parse(source_bytes)
+
+    fn_types  = BLOCK_FUNCTION_TYPES.get(lang, set())
+    cls_types = BLOCK_CLASS_TYPES.get(lang, set())
+
+    target_node = None
+
+    def walk(node):
+        nonlocal target_node
+        if target_node is not None:
+            return
+
+        if node.is_named is False:
+            return
+
+        node_name = _node_top_name(node, lang)
+        if node_name == name:
+            is_match = False
+            if kind == "function" and (node.type in fn_types or (node.type == "decorated_definition" and lang == "python")):
+                is_match = True
+            elif kind == "class" and (node.type in cls_types or (node.type == "decorated_definition" and lang == "python")):
+                is_match = True
+            elif kind == "constant" and _is_constant_node(node, lang):
+                is_match = True
+
+            if is_match:
+                target_node = node
+                return
+
+        for child in node.children:
+            walk(child)
+
+    walk(tree.root_node)
+
+    if target_node:
+        start = target_node.start_point[0]
+        end   = target_node.end_point[0] + 1
+        return start, end
+
+    return None
+
 
 def get_function(path: str, name: str) -> FunctionResult | None:
     """Parse the file. Find symbol with matching name and kind=='function' or 'method'."""
@@ -665,6 +773,111 @@ def extract_references(path: str, symbol_names: set[str]) -> list[tuple[str, int
 
     walk(tree.root_node)
     return refs
+
+
+def extract_imports_structured(path: str) -> list[tuple[str, int, int]]:
+    """
+    Parse file and extract structured import data for database storage.
+
+    Returns a list of (module, level, is_star) tuples:
+        - module: The imported module path (e.g. "os", "models.user", ".utils")
+        - level:  Relative import depth (0 = absolute, 1 = one dot, 2 = two dots, etc.)
+        - is_star: 1 if "from x import *", else 0
+    """
+    lang = detect_language(path)
+    if not lang or lang not in PARSERS:
+        return []
+
+    try:
+        with open(path, "rb") as f:
+            source_bytes = f.read()
+    except Exception:
+        return []
+
+    parser = PARSERS[lang]
+    local_parser = Parser(parser.language)
+    tree = local_parser.parse(source_bytes)
+
+    import_types = IMPORT_NODE_TYPES.get(lang, set())
+    results: list[tuple[str, int, int]] = []
+
+    def walk(node):
+        if node.type in import_types:
+            text = node.text.decode(errors="replace").strip()
+            module = ""
+            level = 0
+            is_star = 0
+
+            if lang == "python":
+                if node.type == "import_from_statement":
+                    # Count leading dots for relative import level
+                    full_text = node.text.decode(errors="replace")
+                    level = 0
+                    for ch in full_text:
+                        if ch == '.':
+                            level += 1
+                        else:
+                            break
+                    # Extract module name (after dots, before "import")
+                    # e.g. "from .utils import auth" -> ".utils"
+                    # e.g. "from models.user import User" -> "models.user"
+                    module_part = text.split("import")[0].strip()
+                    # Remove "from" keyword
+                    if module_part.startswith("from"):
+                        module_part = module_part[4:].strip()
+                    # Remove trailing dots and spaces
+                    module = module_part.strip()
+                    # Check for star import
+                    if "import *" in text:
+                        is_star = 1
+                elif node.type == "import_statement":
+                    # "import os" or "import os as operating_system"
+                    # or "import os.path" or "import models.user"
+                    module_part = text.replace("import", "").strip()
+                    # Handle "as" alias: "import os as operating_system" -> "os"
+                    if " as " in module_part:
+                        module_part = module_part.split(" as ")[0].strip()
+                    module = module_part
+
+            elif lang in ("javascript", "typescript"):
+                # import ... from 'module'
+                if "from" in text:
+                    # Extract between from and the quote
+                    after_from = text.split("from")[-1].strip()
+                    module = after_from.strip("'\"; ")
+                elif "require(" in text:
+                    # const x = require('module')
+                    import re
+                    m = re.search(r"require\(['\"](.+?)['\"]\)", text)
+                    if m:
+                        module = m.group(1)
+
+            elif lang == "java":
+                # import com.example.MyClass;
+                module = text.replace("import", "").replace(";", "").strip()
+                if module.startswith("static "):
+                    module = module[7:].strip()
+
+            elif lang == "go":
+                # import "fmt" or import ( "os" \n "path" )
+                import re
+                m = re.search(r'"(.+?)"', text)
+                if m:
+                    module = m.group(1)
+
+            elif lang == "rust":
+                # use crate::module::Name;
+                module = text.replace("use", "").replace(";", "").strip()
+
+            if module:
+                results.append((module, level, is_star))
+
+        else:
+            for child in node.children:
+                walk(child)
+
+    walk(tree.root_node)
+    return results
 
 
 def extract_docstrings(path: str) -> list[tuple[str, str, int, int]]:

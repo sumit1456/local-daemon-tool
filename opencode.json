@@ -1,0 +1,10 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "mcp": {
+    "CodeSearchEngine": {
+      "type": "local",
+      "command": [".venv-mcp\\Scripts\\python.exe", "mcp_server.py"],
+      "enabled": true
+    }
+  }
+}

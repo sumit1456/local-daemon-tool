@@ -181,6 +181,7 @@ def _merge_imports(existing_lines: list[str], new_import: str) -> list[str]:
 def _apply_blocks(
     original: str,
     blocks: list[CodeBlock],
+    file_path_hint: str | None = None,
 ) -> tuple[str, list[BlockResult]]:
     """
     Apply each block from `blocks` onto `original` source.
@@ -192,6 +193,8 @@ def _apply_blocks(
       constant → replace existing assignment, or insert after imports
       other    → append at end
     """
+    from codeengine.core.ast_engine import find_symbol_bounds_in_code
+
     lines = original.splitlines(keepends=True)
     results: list[BlockResult] = []
 
@@ -201,7 +204,12 @@ def _apply_blocks(
             results.append(BlockResult(kind="import", name=None, action="added"))
 
         elif block.kind in ("function", "class"):
-            bounds = _find_function_bounds(lines, block.name)
+            bounds = find_symbol_bounds_in_code(
+                "".join(lines),
+                block.name,
+                block.kind,
+                file_path_hint=file_path_hint,
+            )
             # Normalise block source — strip leading blank lines, ensure trailing newline
             new_src = textwrap.dedent(block.source).strip() + "\n"
             if bounds:
@@ -225,14 +233,19 @@ def _apply_blocks(
                 ))
 
         elif block.kind == "constant":
-            bounds = _find_constant_bounds(lines, block.name)
+            bounds = find_symbol_bounds_in_code(
+                "".join(lines),
+                block.name,
+                block.kind,
+                file_path_hint=file_path_hint,
+            )
             new_src = block.source.strip() + "\n"
             if bounds:
                 start, end = bounds
                 lines[start:end] = [new_src]
                 results.append(BlockResult(
                     kind="constant", name=block.name, action="replaced",
-                    detail=f"line {start+1}"
+                    detail=f"lines {start+1}–{end}"
                 ))
             else:
                 # Insert after import section
@@ -286,8 +299,8 @@ async def preview_smart_edit(file: str, new_code: str) -> SmartEditPreview:
 
     original = file_path.read_text(encoding="utf-8", errors="replace")
 
-    blocks = _parse_blocks(new_code)
-    merged, block_results = _apply_blocks(original, blocks)
+    blocks = _parse_blocks(new_code, file_path_hint=file)
+    merged, block_results = _apply_blocks(original, blocks, file_path_hint=file)
 
     # Unified diff
     old_lines = original.splitlines(keepends=True)
@@ -340,6 +353,17 @@ async def apply_smart_edit(edit_id: str) -> SmartEditResult:
     file_path.write_text(merged, encoding="utf-8")
 
     repo = _get_repo(str(file_path.parent))
+    
+    # Auto-commit untracked files before first edit so undo won't delete them
+    try:
+        status = repo.git.status("--porcelain", str(file_path)).strip()
+        is_untracked = status.startswith("??")
+    except Exception:
+        is_untracked = False
+    if is_untracked:
+        repo.index.add([str(file_path)])
+        repo.index.commit(f"track: {file_path.name}")
+    
     repo.index.add([str(file_path)])
     commit = repo.index.commit(f"smart-edit: {edit_id}")
 
@@ -475,6 +499,17 @@ async def apply_edit(edit_id: str) -> ApplyResult:
     file_path.write_text(new_content, encoding="utf-8")
     
     repo = _get_repo(str(file_path.parent))
+    
+    # Auto-commit untracked files before first edit so undo won't delete them
+    try:
+        status = repo.git.status("--porcelain", str(file_path)).strip()
+        is_untracked = status.startswith("??")
+    except Exception:
+        is_untracked = False
+    if is_untracked:
+        repo.index.add([str(file_path)])
+        repo.index.commit(f"track: {file_path.name}")
+    
     repo.index.add([str(file_path)])
     commit = repo.index.commit(f"edit: {edit_id}")
     

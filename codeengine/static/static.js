@@ -53,6 +53,13 @@ function navigateToPage(pageName) {
   const pageId = 'page-' + pageName;
   document.getElementById(pageId)?.classList.add('active');
   closeCodePanel();
+
+  // Auto-load data for pages that benefit from it
+  if (pageName === 'index') loadIndex();
+  if (pageName === 'overview') loadOverview();
+  if (pageName === 'call-graph') loadCallGraphSymbols();
+  if (pageName === 'function-extract') loadFunctionExtractFiles();
+  if (pageName === 'import-graph') loadImportGraphFiles();
 }
 
 document.querySelectorAll('.nav-item').forEach(item => {
@@ -171,7 +178,7 @@ async function runCodeSearch() {
         <div class="match-card" onclick="loadFunctionContext('${escHtml(m.file)}',${m.line})">
           <div class="match-header">
             <span class="file-icon">📄</span>
-            <span class="file-path">${escHtml(m.file)}</span>
+            <span class="file-path" onclick="event.stopPropagation(); fillExtract('${escHtml(m.file)}',${m.line},${m.line + 10})">${escHtml(m.file)}</span>
             <span class="line-badge">L${m.line}:${m.col}</span>
           </div>
           <div class="match-body">
@@ -247,7 +254,7 @@ async function runSymbolSearch() {
           <div class="match-card" onclick="loadFunctionContext('${escHtml(m.file)}',${m.line})">
             <div class="match-header">
               <span class="file-icon">📄</span>
-              <span class="file-path">${escHtml(m.file)}</span>
+              <span class="file-path" onclick="event.stopPropagation(); fillExtract('${escHtml(m.file)}',${m.line},${m.line + 10})">${escHtml(m.file)}</span>
               <span class="line-badge">L${m.line}:${m.col}</span>
             </div>
             <div class="match-body">
@@ -263,7 +270,7 @@ async function runSymbolSearch() {
     data.forEach(s => {
       const kindClass = { function:'kind-function', class:'kind-class', method:'kind-method', interface:'kind-interface' }[s.kind] || 'kind-default';
       html += `
-        <div class="symbol-card" onclick="loadSymbolSource('${escHtml(s.file)}','${escHtml(s.name)}','${escHtml(s.kind)}')">
+        <div class="symbol-card" onclick="fillExtract('${escHtml(s.file)}',${s.line_start},${s.line_end})">
           <span class="symbol-kind ${kindClass}">${s.kind}</span>
           <span class="symbol-name">${escHtml(s.name)}</span>
           <span class="symbol-file">${escHtml(s.file)}</span>
@@ -330,7 +337,7 @@ async function runFileFinder() {
     data.forEach(f => {
       const ext  = f.split('.').pop().toLowerCase();
       const icon = ICONS[ext] || '📄';
-      html += `<div class="file-item" onclick="loadFunctionContext('${escHtml(f)}', 1)">${icon} ${escHtml(f)}</div>`;
+      html += `<div class="file-item" onclick="fillExtract('${escHtml(f)}', 1, 50)">${icon} ${escHtml(f)}</div>`;
     });
     ffResults.innerHTML = html;
   } catch(e) {
@@ -341,6 +348,82 @@ async function runFileFinder() {
 
 function copyToClipboard(text) {
   navigator.clipboard.writeText(text).then(() => toast('Copied: ' + text, 'info'));
+}
+
+/* ═══════════════════════════════════════════════════════════
+   SYMBOL CHIPS — populate clickable symbol suggestions
+═══════════════════════════════════════════════════════════ */
+let _cgSymbolsLoaded = false;
+
+async function loadCallGraphSymbols() {
+  if (_cgSymbolsLoaded) return;
+  const chipsContainer = document.getElementById('cg-symbol-chips');
+  if (!chipsContainer) return;
+
+  try {
+    const data = await api('/search/index?');
+    const files = data.files || [];
+    if (!files || files.length === 0) return;
+
+    // Collect all symbols, sort by kind importance
+    const allSymbols = [];
+    files.forEach(item => {
+      (item.symbols || []).forEach(s => {
+        if (s.kind === 'function' || s.kind === 'class') {
+          allSymbols.push(s);
+        }
+      });
+    });
+
+    // Sort: classes first, then functions, limit to 30
+    allSymbols.sort((a, b) => {
+      if (a.kind === 'class' && b.kind !== 'class') return -1;
+      if (b.kind === 'class' && a.kind !== 'class') return 1;
+      return a.name.localeCompare(b.name);
+    });
+
+    const top = allSymbols.slice(0, 30);
+    chipsContainer.innerHTML = top.map(s => {
+      const kindLabel = s.kind === 'class' ? 'class' : 'fn';
+      return `<span class="symbol-chip" onclick="document.getElementById('cg-symbol').value='${escHtml(s.name)}'"><span class="chip-kind">${kindLabel}</span>${escHtml(s.name)}</span>`;
+    }).join('');
+
+    _cgSymbolsLoaded = true;
+  } catch (_) {}
+}
+
+/* ═══════════════════════════════════════════════════════════
+   FILL FUNCTION EXTRACT from index/symbol clicks
+═══════════════════════════════════════════════════════════ */
+function fillExtract(file, lineStart, lineEnd) {
+  document.getElementById('fe-file').value = file;
+  document.getElementById('fe-line-start').value = lineStart;
+  document.getElementById('fe-line-end').value = lineEnd;
+  navigateToPage('function-extract');
+  toast(`Loaded ${file}:${lineStart}-${lineEnd}`, 'success');
+}
+
+/* ═══════════════════════════════════════════════════════════
+   POPULATE FILE DATALIST for Function Extract
+═══════════════════════════════════════════════════════════ */
+let _feFilesLoaded = false;
+
+async function loadFunctionExtractFiles() {
+  if (_feFilesLoaded) return;
+  const datalist = document.getElementById('fe-file-list');
+  if (!datalist) return;
+
+  try {
+    const data = await api('/search/index?');
+    const files = data.files || [];
+    if (!files || files.length === 0) return;
+
+    datalist.innerHTML = files.map(item => 
+      `<option value="${escHtml(item.file)}">`
+    ).join('');
+
+    _feFilesLoaded = true;
+  } catch (_) {}
 }
 
 /* ═══════════════════════════════════════════════════════════
@@ -935,6 +1018,8 @@ document.getElementById('idx-files').addEventListener('keydown', e => { if(e.key
 async function loadIndex() {
   const filesInput = document.getElementById('idx-files').value.trim();
   const files = filesInput ? filesInput.split(',').map(f => f.trim()) : null;
+  const dirVal = document.getElementById('idx-dir')?.value.trim() || null;
+  const pkgVal = document.getElementById('idx-package')?.value.trim() || null;
   
   loading(idxResults);
   try {
@@ -942,19 +1027,101 @@ async function loadIndex() {
     if (files && files.length > 0) {
       files.forEach(f => params.append('files', f));
     }
+    if (dirVal) params.append('dir', dirVal);
+    if (pkgVal) params.append('package', pkgVal);
     const data = await api(`/search/index?${params}`);
-    
-    if (!data || data.length === 0) {
-      empty(idxResults, '📋', 'No index data', 'Repository has not been indexed yet.');
+
+    if (data.mode === 'summary') {
+      let html = `
+        <div class="summary-stats">
+          <div class="summary-stat">
+            <span class="stat-icon">📄</span>
+            <div><div class="stat-value">${data.total_files}</div><div class="stat-label">Files</div></div>
+          </div>
+          <div class="summary-stat">
+            <span class="stat-icon">🔣</span>
+            <div><div class="stat-value">${data.total_symbols}</div><div class="stat-label">Symbols</div></div>
+          </div>
+          ${Object.entries(data.symbol_kinds || {}).slice(0, 4).map(([kind, count]) => `
+            <div class="summary-stat">
+              <span class="stat-icon">${{function:'ƒ',class:'◆',method:'→',interface:'◇'}[kind] || '·'}</span>
+              <div><div class="stat-value">${count}</div><div class="stat-label">${kind}s</div></div>
+            </div>
+          `).join('')}
+        </div>`;
+
+      if (data.languages && Object.keys(data.languages).length) {
+        html += `<div style="margin-bottom:16px;"><h3 style="font-size:13px;font-weight:600;color:var(--text-primary);margin-bottom:8px;">Languages</h3>
+          <div style="display:flex;flex-wrap:wrap;gap:6px;">
+            ${Object.entries(data.languages).map(([lang, count]) => `<span style="background:var(--bg-tertiary);padding:4px 10px;border-radius:12px;font-size:12px;color:var(--text-secondary);">${escHtml(lang)}: ${count}</span>`).join('')}
+          </div></div>`;
+      }
+
+      if (data.top_dirs && data.top_dirs.length) {
+        html += `<div style="margin-bottom:16px;"><h3 style="font-size:13px;font-weight:600;color:var(--text-primary);margin-bottom:8px;">Directories</h3>`;
+        data.top_dirs.forEach(d => {
+          html += `<div class="match-card" style="cursor:pointer;" onclick="document.getElementById('idx-dir').value='${escHtml(d.path)}'; loadIndex();">
+            <div class="match-header"><span class="file-icon">📁</span><span class="file-path">${escHtml(d.path)}</span></div>
+            <div class="match-body" style="padding:6px 14px;font-size:12px;color:var(--text-muted);">${d.files} files, ${d.symbols} symbols</div>
+          </div>`;
+        });
+        html += `</div>`;
+      }
+
+      if (data.top_files && data.top_files.length) {
+        html += `<div><h3 style="font-size:13px;font-weight:600;color:var(--text-primary);margin-bottom:8px;">Top Files</h3>`;
+        data.top_files.forEach(f => {
+          html += `<div class="match-card">
+            <div class="match-header"><span class="file-icon">📄</span><span class="file-path">${escHtml(f.file)}</span></div>
+            <div class="match-body" style="padding:6px 14px;font-size:12px;color:var(--text-muted);">${f.symbols} symbols</div>
+          </div>`;
+        });
+        html += `</div>`;
+      }
+
+      idxResults.innerHTML = html;
       return;
     }
 
-    let html = `<div class="stats-bar"><span class="stats-badge">📋 ${data.length} file${data.length!==1?'s':''}</span></div>`;
-    data.forEach(item => {
+    // Detailed mode
+    const detailedFiles = data.files || [];
+    if (!detailedFiles || detailedFiles.length === 0) {
+      empty(idxResults, '📋', 'No index data', 'No indexed files found for the current filters.');
+      return;
+    }
+
+    const totalFiles = data.total || detailedFiles.length;
+    const totalSymbols = detailedFiles.reduce((sum, item) => sum + (item.symbols?.length || 0), 0);
+    const kindCounts = {};
+    detailedFiles.forEach(item => {
+      (item.symbols || []).forEach(s => {
+        kindCounts[s.kind] = (kindCounts[s.kind] || 0) + 1;
+      });
+    });
+
+    let html = `
+      <div class="summary-stats">
+        <div class="summary-stat">
+          <span class="stat-icon">📄</span>
+          <div><div class="stat-value">${totalFiles}</div><div class="stat-label">Files</div></div>
+        </div>
+        <div class="summary-stat">
+          <span class="stat-icon">🔣</span>
+          <div><div class="stat-value">${totalSymbols}</div><div class="stat-label">Symbols</div></div>
+        </div>
+        ${Object.entries(kindCounts).slice(0, 4).map(([kind, count]) => `
+          <div class="summary-stat">
+            <span class="stat-icon">${{function:'ƒ',class:'◆',method:'→',interface:'◇'}[kind] || '·'}</span>
+            <div><div class="stat-value">${count}</div><div class="stat-label">${kind}s</div></div>
+          </div>
+        `).join('')}
+      </div>`;
+
+    detailedFiles.forEach(item => {
       const symbols = item.symbols || [];
       const symbolHtml = symbols.map(s => {
         const kindClass = { function:'kind-function', class:'kind-class', method:'kind-method', interface:'kind-interface' }[s.kind] || 'kind-default';
-        return `<span class="symbol-kind ${kindClass}" style="font-size:10px;padding:2px 6px;margin-right:4px;">${s.kind}</span><span style="font-family:var(--font-mono);font-size:12px;color:var(--text-secondary);">${escHtml(s.name)}</span>`;
+        return `<span class="symbol-kind ${kindClass}" style="font-size:10px;padding:2px 6px;margin-right:4px;cursor:pointer;" onclick="fillExtract('${escHtml(item.file)}',${s.line_start},${s.line_end})">${s.kind}</span><span style="font-family:var(--font-mono);font-size:12px;color:var(--text-secondary);cursor:pointer;" onclick="fillExtract('${escHtml(item.file)}',${s.line_start},${s.line_end})">${escHtml(s.name)}</span>`;
       }).join(' ');
       
       html += `
@@ -986,6 +1153,8 @@ document.getElementById('ov-files').addEventListener('keydown', e => { if(e.key=
 async function loadOverview() {
   const filesInput = document.getElementById('ov-files').value.trim();
   const files = filesInput ? filesInput.split(',').map(f => f.trim()) : null;
+  const dirVal = document.getElementById('ov-dir')?.value.trim() || null;
+  const pkgVal = document.getElementById('ov-package')?.value.trim() || null;
   
   loading(ovResults);
   try {
@@ -993,31 +1162,128 @@ async function loadOverview() {
     if (files && files.length > 0) {
       files.forEach(f => params.append('files', f));
     }
+    if (dirVal) params.append('dir', dirVal);
+    if (pkgVal) params.append('package', pkgVal);
     const data = await api(`/search/overview?${params}`);
     
     if (!data) {
-      empty(ovResults, '🗺', 'No overview data', 'Repository has not been indexed yet.');
+      empty(ovResults, '🗺', 'No overview data', 'No indexed data found for the current filters.');
       return;
     }
 
+    if (data.mode === 'summary') {
+      let html = `
+        <div class="summary-stats">
+          <div class="summary-stat">
+            <span class="stat-icon">📄</span>
+            <div><div class="stat-value">${data.total_files}</div><div class="stat-label">Files</div></div>
+          </div>
+          <div class="summary-stat">
+            <span class="stat-icon">🔣</span>
+            <div><div class="stat-value">${data.total_symbols}</div><div class="stat-label">Symbols</div></div>
+          </div>
+          <div class="summary-stat">
+            <span class="stat-icon">🔗</span>
+            <div><div class="stat-value">${data.call_graph?.total_edges || 0}</div><div class="stat-label">Call Edges</div></div>
+          </div>
+          <div class="summary-stat">
+            <span class="stat-icon">📞</span>
+            <div><div class="stat-value">${data.call_graph?.unique_callers || 0}</div><div class="stat-label">Callers</div></div>
+          </div>
+          <div class="summary-stat">
+            <span class="stat-icon">📥</span>
+            <div><div class="stat-value">${data.call_graph?.unique_callees || 0}</div><div class="stat-label">Callees</div></div>
+          </div>
+        </div>`;
+
+      if (data.languages && Object.keys(data.languages).length) {
+        html += `<div style="margin-bottom:16px;"><h3 style="font-size:13px;font-weight:600;color:var(--text-primary);margin-bottom:8px;">Languages</h3>
+          <div style="display:flex;flex-wrap:wrap;gap:6px;">
+            ${Object.entries(data.languages).map(([lang, count]) => `<span style="background:var(--bg-tertiary);padding:4px 10px;border-radius:12px;font-size:12px;color:var(--text-secondary);">${escHtml(lang)}: ${count}</span>`).join('')}
+          </div></div>`;
+      }
+
+      if (data.top_dirs && data.top_dirs.length) {
+        html += `<div style="margin-bottom:16px;"><h3 style="font-size:13px;font-weight:600;color:var(--text-primary);margin-bottom:8px;">Directories</h3>`;
+        data.top_dirs.forEach(d => {
+          html += `<div class="match-card">
+            <div class="match-header"><span class="file-icon">📁</span><span class="file-path">${escHtml(d.path)}</span></div>
+            <div class="match-body" style="padding:6px 14px;font-size:12px;color:var(--text-muted);">${d.files} files, ${d.symbols} symbols</div>
+          </div>`;
+        });
+        html += `</div>`;
+      }
+
+      const cg = data.call_graph || {};
+      if (cg.top_connected_files && cg.top_connected_files.length) {
+        html += `<div style="margin-bottom:16px;"><h3 style="font-size:13px;font-weight:600;color:var(--text-primary);margin-bottom:8px;">Most Connected Files</h3>`;
+        cg.top_connected_files.forEach(f => {
+          html += `<div class="match-card">
+            <div class="match-header"><span class="file-icon">📄</span><span class="file-path">${escHtml(f.file)}</span></div>
+            <div class="match-body" style="padding:6px 14px;font-size:12px;color:var(--text-muted);">${f.outgoing_calls} outgoing calls</div>
+          </div>`;
+        });
+        html += `</div>`;
+      }
+
+      if (cg.top_callers && cg.top_callers.length) {
+        html += `<div style="margin-bottom:16px;"><h3 style="font-size:13px;font-weight:600;color:var(--text-primary);margin-bottom:8px;">Top Callers</h3>`;
+        cg.top_callers.forEach(c => {
+          html += `<div class="symbol-card">
+            <span class="symbol-name" style="font-size:12px;">${escHtml(c.symbol)}</span>
+            <span class="symbol-file" style="font-size:11px;">${c.calls} calls</span>
+          </div>`;
+        });
+        html += `</div>`;
+      }
+
+      if (cg.top_callees && cg.top_callees.length) {
+        html += `<div><h3 style="font-size:13px;font-weight:600;color:var(--text-primary);margin-bottom:8px;">Most Called</h3>`;
+        cg.top_callees.forEach(c => {
+          html += `<div class="symbol-card">
+            <span class="symbol-name" style="font-size:12px;">${escHtml(c.symbol)}</span>
+            <span class="symbol-file" style="font-size:11px;">called by ${c.called_by}</span>
+          </div>`;
+        });
+        html += `</div>`;
+      }
+
+      ovResults.innerHTML = html;
+      return;
+    }
+
+    // Detailed mode
     const fileCount = (data.files || []).length;
     const edgeCount = (data.edges || []).length;
     const calleeCount = Object.keys(data.callees || {}).length;
     const callerCount = Object.keys(data.callers || {}).length;
 
-    let html = `<div class="stats-bar">
-      <span class="stats-badge">📄 ${fileCount} files</span>
-      <span class="stats-badge">🔗 ${edgeCount} edges</span>
-      <span class="stats-badge">🔣 ${calleeCount} callees</span>
-      <span class="stats-badge">🔣 ${callerCount} callers</span>
-    </div>`;
+    let html = `
+      <div class="summary-stats">
+        <div class="summary-stat">
+          <span class="stat-icon">📄</span>
+          <div><div class="stat-value">${fileCount}</div><div class="stat-label">Files</div></div>
+        </div>
+        <div class="summary-stat">
+          <span class="stat-icon">🔗</span>
+          <div><div class="stat-value">${edgeCount}</div><div class="stat-label">Call Edges</div></div>
+        </div>
+        <div class="summary-stat">
+          <span class="stat-icon">📞</span>
+          <div><div class="stat-value">${calleeCount}</div><div class="stat-label">Callees</div></div>
+        </div>
+        <div class="summary-stat">
+          <span class="stat-icon">📥</span>
+          <div><div class="stat-value">${callerCount}</div><div class="stat-label">Callers</div></div>
+        </div>
+      </div>`;
 
     // Show call edges
     if (data.edges && data.edges.length > 0) {
       html += `<div style="margin-bottom:16px;"><h3 style="font-size:13px;font-weight:600;color:var(--text-primary);margin-bottom:8px;">Call Edges</h3>`;
       data.edges.forEach(edge => {
         html += `
-          <div class="symbol-card">
+          <div class="symbol-card" onclick="document.getElementById('cg-symbol').value='${escHtml(edge.caller_name || '')}'; navigateToPage('call-graph');">
             <span class="symbol-name" style="font-size:12px;">${escHtml(edge.caller_name || 'unknown')} → ${escHtml(edge.callee_name || 'unknown')}</span>
             <span class="symbol-file" style="font-size:11px;">${escHtml(edge.caller_file || '')}</span>
           </div>`;
@@ -1062,12 +1328,17 @@ document.getElementById('cg-symbol').addEventListener('keydown', e => { if(e.key
 
 async function loadCallGraph(type) {
   const symbol = document.getElementById('cg-symbol').value.trim();
+  const dirVal = document.getElementById('cg-dir')?.value.trim() || null;
+  const pkgVal = document.getElementById('cg-package')?.value.trim() || null;
   if (!symbol) { toast('Enter a symbol name', 'error'); return; }
   
   loading(cgResults);
   try {
     const endpoint = type === 'callers' ? '/search/callers' : '/search/callees';
-    const data = await api(`${endpoint}?${new URLSearchParams({ symbol_name: symbol })}`);
+    const params = new URLSearchParams({ symbol_name: symbol });
+    if (dirVal) params.append('dir', dirVal);
+    if (pkgVal) params.append('package', pkgVal);
+    const data = await api(`${endpoint}?${params}`);
     
     if (!data || data.length === 0) {
       empty(cgResults, '🔗', 'No results', `No ${type} found for symbol "${escHtml(symbol)}".`);
@@ -1078,14 +1349,14 @@ async function loadCallGraph(type) {
     data.forEach(item => {
       if (type === 'callers') {
         html += `
-          <div class="symbol-card">
+          <div class="symbol-card" onclick="fillExtract('${escHtml(item.caller_file || '')}',${item.caller_line || 1},${(item.caller_line || 1) + 5})">
             <span class="symbol-kind kind-function">caller</span>
             <span class="symbol-name">${escHtml(item.caller_name || 'unknown')}</span>
             <span class="symbol-file">${escHtml(item.caller_file || '')}</span>
           </div>`;
       } else {
         html += `
-          <div class="symbol-card">
+          <div class="symbol-card" onclick="document.getElementById('cg-symbol').value='${escHtml(item.callee_name || '')}'; loadCallGraph('callers');">
             <span class="symbol-kind kind-function">callee</span>
             <span class="symbol-name">${escHtml(item.callee_name || 'unknown')}</span>
             <span class="symbol-file">${escHtml(item.callee_file || '')}</span>
@@ -1097,6 +1368,155 @@ async function loadCallGraph(type) {
     empty(cgResults, '⚠️', 'Search failed', e.message);
     toast('Error: ' + e.message, 'error');
   }
+}
+
+/* ═══════════════════════════════════════════════════════════
+   IMPORT GRAPH PAGE
+═══════════════════════════════════════════════════════════ */
+const igResults = document.getElementById('ig-results');
+let _igMode = 'file-imports';
+
+/* Mode toggle */
+document.querySelectorAll('#import-mode-toggle .mode-btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('#import-mode-toggle .mode-btn').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    _igMode = btn.dataset.mode;
+    document.getElementById('import-file-row').style.display = _igMode === 'file-imports' ? 'flex' : 'none';
+    document.getElementById('import-module-row').style.display = _igMode === 'module-importers' ? 'flex' : 'none';
+  });
+});
+
+/* File imports */
+document.getElementById('ig-file-btn').addEventListener('click', loadFileImports);
+document.getElementById('ig-file').addEventListener('keydown', e => { if(e.key==='Enter') loadFileImports(); });
+
+async function loadFileImports() {
+  const file = document.getElementById('ig-file').value.trim();
+  if (!file) { toast('Enter a file path', 'error'); return; }
+
+  loading(igResults);
+  try {
+    const data = await api(`/search/imports?${new URLSearchParams({ file })}`);
+
+    if (!data.imports || data.imports.length === 0) {
+      empty(igResults, '📦', 'No imports found', `No imports found for "${escHtml(file)}".`);
+      return;
+    }
+
+    let html = `<div class="stats-bar"><span class="stats-badge">📦 ${data.imports.length} import${data.imports.length!==1?'s':''}</span> from <code style="font-family:var(--font-mono);background:var(--bg-elevated);padding:2px 6px;border-radius:4px;">${escHtml(file)}</code></div>`;
+    data.imports.forEach(imp => {
+      const levelLabel = imp.level > 0 ? `relative (${'.'.repeat(imp.level)})` : 'absolute';
+      const starBadge = imp.is_star ? '<span style="color:var(--warning);font-size:10px;margin-left:6px;">* star</span>' : '';
+      html += `
+        <div class="symbol-card" onclick="document.getElementById('ig-module').value='${escHtml(imp.module)}'; document.querySelectorAll('#import-mode-toggle .mode-btn').forEach(b=>b.classList.remove('active')); document.querySelector('[data-mode=module-importers]').classList.add('active'); _igMode='module-importers'; document.getElementById('import-file-row').style.display='none'; document.getElementById('import-module-row').style.display='flex'; loadModuleImporters();">
+          <span class="symbol-kind kind-import">import</span>
+          <span class="symbol-name">${escHtml(imp.module)}${starBadge}</span>
+          <span class="symbol-file" style="font-size:11px;">${levelLabel}</span>
+        </div>`;
+    });
+    igResults.innerHTML = html;
+  } catch(e) {
+    empty(igResults, '⚠️', 'Search failed', e.message);
+    toast('Error: ' + e.message, 'error');
+  }
+}
+
+/* Module importers */
+document.getElementById('ig-module-btn').addEventListener('click', loadModuleImporters);
+document.getElementById('ig-module').addEventListener('keydown', e => { if(e.key==='Enter') loadModuleImporters(); });
+
+async function loadModuleImporters() {
+  const module = document.getElementById('ig-module').value.trim();
+  if (!module) { toast('Enter a module name', 'error'); return; }
+
+  loading(igResults);
+  try {
+    const data = await api(`/search/importers?${new URLSearchParams({ module })}`);
+
+    if (!data || data.length === 0) {
+      empty(igResults, '📦', 'No importers found', `No files import module "${escHtml(module)}".`);
+      return;
+    }
+
+    let html = `<div class="stats-bar"><span class="stats-badge">📦 ${data.length} file${data.length!==1?'s':''}</span> import <code style="font-family:var(--font-mono);background:var(--bg-elevated);padding:2px 6px;border-radius:4px;">${escHtml(module)}</code></div>`;
+    data.forEach(item => {
+      const starBadge = item.is_star ? '<span style="color:var(--warning);font-size:10px;margin-left:6px;">* star</span>' : '';
+      html += `
+        <div class="symbol-card" onclick="fillExtract('${escHtml(item.file)}',1,50)">
+          <span class="symbol-kind kind-function">importer</span>
+          <span class="symbol-name">${escHtml(item.file)}</span>
+          <span class="symbol-file" style="font-size:11px;">${escHtml(item.module)}${starBadge}</span>
+        </div>`;
+    });
+    igResults.innerHTML = html;
+  } catch(e) {
+    empty(igResults, '⚠️', 'Search failed', e.message);
+    toast('Error: ' + e.message, 'error');
+  }
+}
+
+/* Full deps (combined view) */
+document.getElementById('ig-file-deps-btn').addEventListener('click', loadFileDeps);
+
+async function loadFileDeps() {
+  const file = document.getElementById('ig-file').value.trim();
+  if (!file) { toast('Enter a file path', 'error'); return; }
+
+  loading(igResults);
+  try {
+    const data = await api(`/search/file-deps?${new URLSearchParams({ file })}`);
+
+    let html = `<div class="stats-bar"><span class="stats-badge">📦 Deps for ${escHtml(file)}</span></div>`;
+
+    /* imports section */
+    html += `<div style="margin-bottom:16px;"><h3 style="font-size:13px;font-weight:600;color:var(--text-primary);margin-bottom:8px;">📥 Imports (${(data.imports||[]).length})</h3>`;
+    if (data.imports && data.imports.length > 0) {
+      data.imports.forEach(imp => {
+        html += `<div class="symbol-card" onclick="document.getElementById('ig-module').value='${escHtml(imp.module)}'; _igMode='module-importers'; document.getElementById('import-file-row').style.display='none'; document.getElementById('import-module-row').style.display='flex'; document.querySelectorAll('#import-mode-toggle .mode-btn').forEach(b=>b.classList.remove('active')); document.querySelector('[data-mode=module-importers]').classList.add('active'); loadModuleImporters();">
+          <span class="symbol-kind kind-import">import</span>
+          <span class="symbol-name">${escHtml(imp.module)}</span>
+        </div>`;
+      });
+    } else {
+      html += `<div style="color:var(--text-muted);font-size:12px;padding:8px;">No imports</div>`;
+    }
+    html += `</div>`;
+
+    /* imported_by section */
+    html += `<div><h3 style="font-size:13px;font-weight:600;color:var(--text-primary);margin-bottom:8px;">📤 Imported By (${(data.imported_by||[]).length})</h3>`;
+    if (data.imported_by && data.imported_by.length > 0) {
+      data.imported_by.forEach(item => {
+        html += `<div class="symbol-card" onclick="fillExtract('${escHtml(item.file)}',1,50)">
+          <span class="symbol-kind kind-function">importer</span>
+          <span class="symbol-name">${escHtml(item.file)}</span>
+          <span class="symbol-file" style="font-size:11px;">${escHtml(item.module)}</span>
+        </div>`;
+      });
+    } else {
+      html += `<div style="color:var(--text-muted);font-size:12px;padding:8px;">No files import this</div>`;
+    }
+    html += `</div>`;
+
+    igResults.innerHTML = html;
+  } catch(e) {
+    empty(igResults, '⚠️', 'Search failed', e.message);
+    toast('Error: ' + e.message, 'error');
+  }
+}
+
+/* Populate file datalist for import graph */
+let _igFilesLoaded = false;
+async function loadImportGraphFiles() {
+  if (_igFilesLoaded) return;
+  const datalist = document.getElementById('ig-file-list');
+  if (!datalist) return;
+  try {
+    const data = await api('/search/index?');
+    const files = data.files || [];
+    datalist.innerHTML = files.map(item => `<option value="${escHtml(item.file)}">`).join('');
+    _igFilesLoaded = true;
+  } catch (_) {}
 }
 
 /* ═══════════════════════════════════════════════════════════

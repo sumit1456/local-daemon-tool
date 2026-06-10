@@ -180,9 +180,9 @@ def test_call_graph_and_endpoints():
             index_resp = cl.get("/search/index")
             assert index_resp.status_code == 200
             index_data = index_resp.json()
-            assert len(index_data) == 1
-            assert index_data[0]["file"] == "payment.py"
-            symbols = {s["name"]: s for s in index_data[0]["symbols"]}
+            assert index_data["total"] == 1
+            assert index_data["files"][0]["file"] == "payment.py"
+            symbols = {s["name"]: s for s in index_data["files"][0]["symbols"]}
             assert "validate_card" in symbols
             assert "charge_customer" in symbols
             

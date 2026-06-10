@@ -55,3 +55,33 @@ CREATE TABLE IF NOT EXISTS docstrings (
     line_end    INTEGER NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS imports (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    file_id     INTEGER NOT NULL REFERENCES files(id) ON DELETE CASCADE,
+    module      TEXT    NOT NULL,
+    level       INTEGER DEFAULT 0,
+    is_star     INTEGER DEFAULT 0,
+    UNIQUE(file_id, module) ON CONFLICT REPLACE
+);
+
+CREATE INDEX IF NOT EXISTS idx_imports_file ON imports(file_id);
+CREATE INDEX IF NOT EXISTS idx_imports_module ON imports(module);
+
+CREATE TABLE IF NOT EXISTS type_hints (
+    symbol_id   INTEGER NOT NULL REFERENCES symbols(id) ON DELETE CASCADE,
+    param_name  TEXT,
+    annotation  TEXT NOT NULL,
+    is_return   INTEGER DEFAULT 0
+);
+
+CREATE INDEX IF NOT EXISTS idx_type_hints_symbol ON type_hints(symbol_id);
+
+CREATE TABLE IF NOT EXISTS class_bases (
+    class_id    INTEGER NOT NULL REFERENCES symbols(id) ON DELETE CASCADE,
+    base_name   TEXT    NOT NULL,
+    base_file   TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_class_bases_class ON class_bases(class_id);
+CREATE INDEX IF NOT EXISTS idx_class_bases_base ON class_bases(base_name);
+

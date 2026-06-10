@@ -193,6 +193,15 @@ async def index_repo(root: str, on_progress=None) -> int:
                             (ds_symbol["id"], ds_content, ds_line_start, ds_line_end)
                         )
 
+                # Extract and store imports
+                from codeengine.core.ast_engine import extract_imports_structured
+                imports = extract_imports_structured(str(p))
+                for module, level, is_star in imports:
+                    await db.execute(
+                        "INSERT INTO imports (file_id, module, level, is_star) VALUES (?, ?, ?, ?)",
+                        (file_id, module, level, is_star)
+                    )
+
                 indexed_count += 1
                 sym_names = [s["name"] for s in inserted_symbols]
                 logger.info("[%d/%d] INDEXED (%s, %d symbols): %s — %s",
@@ -336,6 +345,15 @@ async def reindex_file(path: str) -> None:
                     "INSERT OR REPLACE INTO docstrings (symbol_id, content, line_start, line_end) VALUES (?, ?, ?, ?)",
                     (ds_symbol["id"], ds_content, ds_line_start, ds_line_end)
                 )
+
+        # Extract and store imports
+        from codeengine.core.ast_engine import extract_imports_structured
+        imports = extract_imports_structured(str(p))
+        for module, level, is_star in imports:
+            await db.execute(
+                "INSERT INTO imports (file_id, module, level, is_star) VALUES (?, ?, ?, ?)",
+                (file_id, module, level, is_star)
+            )
 
         await resolve_callee_ids(db)
         await db.commit()
