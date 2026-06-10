@@ -444,7 +444,10 @@ def cmd_index(args) -> None:
     data = _get("/search/index",
                 files=args.files if args.files else None,
                 dir=args.dir,
-                package=args.package)
+                package=args.package,
+                q=args.q,
+                limit=args.limit,
+                offset=args.offset)
     _out(data)
 
 
@@ -453,7 +456,10 @@ def cmd_overview(args) -> None:
     data = _get("/search/overview",
                 files=args.files if args.files else None,
                 dir=args.dir,
-                package=args.package)
+                package=args.package,
+                q=args.q,
+                limit=args.limit,
+                offset=args.offset)
     _out(data)
 
 
