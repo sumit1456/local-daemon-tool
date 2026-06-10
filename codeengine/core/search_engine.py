@@ -744,6 +744,68 @@ def _build_lookup_maps(edges: list[CallEdge]) -> tuple[dict[str, list[str]], dic
     return callees, callers
 
 
+def _build_index_summary(all_files: list[FileIndex]) -> dict:
+    """Build compact summary from full file index — no symbol names, just counts."""
+    from collections import Counter
+
+    total_files = len(all_files)
+    total_symbols = sum(len(f.symbols) for f in all_files)
+
+    # Language detection by extension
+    ext_map = {
+        ".py": "python", ".js": "javascript", ".ts": "typescript",
+        ".jsx": "javascript", ".tsx": "typescript", ".go": "go",
+        ".rs": "rust", ".java": "java", ".sql": "sql",
+        ".html": "html", ".css": "css", ".json": "json",
+        ".yaml": "yaml", ".yml": "yaml", ".md": "markdown",
+        ".toml": "toml", ".sh": "shell",
+    }
+    lang_counter: Counter = Counter()
+    for f in all_files:
+        ext = "." + f.file.rsplit(".", 1)[-1] if "." in f.file else ""
+        lang_counter[ext_map.get(ext, ext.lstrip(".") or "unknown")] += 1
+
+    # Group by top-level directory (first segment)
+    dir_stats: dict[str, dict] = {}
+    for f in all_files:
+        parts = f.file.replace("\\", "/").split("/")
+        top_dir = parts[0] if len(parts) > 1 else "."
+        if top_dir not in dir_stats:
+            dir_stats[top_dir] = {"files": 0, "symbols": 0}
+        dir_stats[top_dir]["files"] += 1
+        dir_stats[top_dir]["symbols"] += len(f.symbols)
+
+    # Sort dirs by symbol count descending
+    top_dirs = sorted(
+        [{"path": k, **v} for k, v in dir_stats.items()],
+        key=lambda x: x["symbols"],
+        reverse=True,
+    )
+
+    # Top files by symbol count
+    top_files = sorted(
+        [{"file": f.file, "symbols": len(f.symbols)} for f in all_files],
+        key=lambda x: x["symbols"],
+        reverse=True,
+    )[:10]
+
+    # Symbol kind breakdown
+    kind_counter: Counter = Counter()
+    for f in all_files:
+        for s in f.symbols:
+            kind_counter[s.kind] += 1
+
+    return {
+        "mode": "summary",
+        "total_files": total_files,
+        "total_symbols": total_symbols,
+        "languages": dict(lang_counter.most_common()),
+        "symbol_kinds": dict(kind_counter.most_common()),
+        "top_dirs": top_dirs,
+        "top_files": top_files,
+    }
+
+
 async def get_index(
     files: list[str] | None = None,
     dir_filter: str | None = None,
