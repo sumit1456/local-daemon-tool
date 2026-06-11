@@ -11,23 +11,42 @@ echo "   Code Search Engine - Setup"
 echo "  ===================================="
 echo ""
 
-# ── Check Python ──────────────────────────────────────────────────────────
-if ! command -v python3 &>/dev/null; then
-    echo "  ERROR: python3 not found."
-    echo "  Install Python 3.11+:"
-    echo "    Ubuntu/Debian: sudo apt install python3 python3-venv"
-    echo "    Mac: brew install python@3.11"
+# ── Find Python 3.10+ ─────────────────────────────────────────────────────
+find_python() {
+    # Try versioned names first (most reliable on servers)
+    for cmd in python3.13 python3.12 python3.11 python3.10 python3; do
+        if command -v "$cmd" &>/dev/null; then
+            ver=$("$cmd" -c "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')" 2>/dev/null)
+            major=$(echo "$ver" | cut -d. -f1)
+            minor=$(echo "$ver" | cut -d. -f2)
+            if [ "$major" -ge 3 ] && [ "$minor" -ge 10 ]; then
+                echo "$cmd"
+                return
+            fi
+        fi
+    done
+    echo ""
+}
+
+PYTHON=$(find_python)
+if [ -z "$PYTHON" ]; then
+    echo "  ERROR: Python 3.10+ not found."
+    echo ""
+    echo "  Install it:"
+    echo "    Ubuntu/Debian: sudo apt install python3.11 python3.11-venv"
+    echo "    RHEL/CentOS:   sudo dnf install python3.11"
+    echo "    Mac:           brew install python@3.11"
     exit 1
 fi
 
-PYVER=$(python3 --version 2>&1 | awk '{print $2}')
-echo "  Found python3 $PYVER"
+PYVER=$($PYTHON --version 2>&1 | awk '{print $2}')
+echo "  Found $PYTHON $PYVER"
 
 # ── Create main venv ──────────────────────────────────────────────────────
 if [ ! -f ".venv/bin/python" ]; then
     echo ""
     echo "  Creating main virtual environment..."
-    python3 -m venv .venv
+    $PYTHON -m venv .venv
     echo "  .venv created."
 else
     echo "  .venv already exists, skipping creation."
@@ -43,7 +62,7 @@ echo "  Installing main dependencies..."
 if [ ! -f ".venv-mcp/bin/python" ]; then
     echo ""
     echo "  Creating MCP server virtual environment..."
-    python3 -m venv .venv-mcp
+    $PYTHON -m venv .venv-mcp
     .venv-mcp/bin/pip install --upgrade pip >/dev/null 2>&1
     .venv-mcp/bin/pip install mcp httpx
     echo "  .venv-mcp created."
