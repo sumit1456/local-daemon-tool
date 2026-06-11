@@ -13,16 +13,19 @@ build/
 *.egg-link
 pip-wheel-metadata/
 
+# ─── Build / Package ─────────────────────────────────────────────────────────
+codeengine.egg-info/
+
 # ─── Virtual Environments ─────────────────────────────────────────────────────
 .venv/
+.venv-mcp/
 venv/
 env/
 ENV/
 .env.bak
 
 # ─── Environment & Secrets ────────────────────────────────────────────────────
-# Keep .env tracked if it only has non-secret defaults; remove this line if it has secrets
-# .env
+.env
 
 # ─── Database / Index ─────────────────────────────────────────────────────────
 data/index.db
