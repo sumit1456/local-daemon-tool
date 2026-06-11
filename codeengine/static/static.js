@@ -37,7 +37,9 @@ function escHtml(s) {
 }
 
 function getRepo() {
-  return document.getElementById('repo-path').value.trim() || '.';
+  let v = document.getElementById('repo-path').value.trim();
+  if (v.startsWith('"') && v.endsWith('"')) v = v.slice(1, -1);
+  return v || '.';
 }
 
 /* ═══════════════════════════════════════════════════════════

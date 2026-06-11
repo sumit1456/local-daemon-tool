@@ -1,7 +1,7 @@
 # Code Search Engine — CLI Manual
 
 > **For AI agents** that cannot use MCP tools directly.
-> Call these via `bash` / PowerShell `run_command`.
+> Call these via `bash` / PowerShell `run_command`..
 
 ---
 
