@@ -280,8 +280,8 @@ Usage (from the local-daemon-tool directory):
     .venv\Scripts\python.exe ce_cli.py class    "rel/path/to/file.py" "ClassName"
     .venv\Scripts\python.exe ce_cli.py index    [--files foo.py bar.py] [--dir src] [--package codeengine.core]
     .venv\Scripts\python.exe ce_cli.py overview [--files foo.py bar.py] [--dir src] [--package codeengine.core]
-    .venv\Scripts\python.exe ce_cli.py callers  "symbol_name" [--dir src] [--package codeengine.core]
-    .venv\Scripts\python.exe ce_cli.py callees  "symbol_name" [--dir src] [--package codeengine.core]
+    .venv\Scripts\python.exe ce_cli.py callers  "symbol_name"
+    .venv\Scripts\python.exe ce_cli.py callees  "symbol_name"
     .venv\Scripts\python.exe ce_cli.py signature "rel/path/to/file.py" 42 89
     .venv\Scripts\python.exe ce_cli.py body      "rel/path/to/file.py" 42 89
     .venv\Scripts\python.exe ce_cli.py detect    "def foo(): pass" [--file_hint x.py] [--lang_hint python]
@@ -297,6 +297,11 @@ Usage (from the local-daemon-tool directory):
     .venv\Scripts\python.exe ce_cli.py count-refs "symbol_name"
     .venv\Scripts\python.exe ce_cli.py impact "symbol_name"
     .venv\Scripts\python.exe ce_cli.py trace "symbol_name" [--depth 5]
+    .venv\Scripts\python.exe ce_cli.py embedding-status
+    .venv\Scripts\python.exe ce_cli.py toggle-embeddings true|false
+    .venv\Scripts\python.exe ce_cli.py semantic-search "natural language query" [--limit 10]
+    .venv\Scripts\python.exe ce_cli.py find-similar "symbol_name" [--file x.py] [--limit 5]
+    .venv\Scripts\python.exe ce_cli.py tools-docs
 """
 
 import sys
@@ -595,6 +600,36 @@ def cmd_trace(args) -> None:
     _out(data)
 
 
+def cmd_embedding_status(_args) -> None:
+    """Check if embeddings are enabled, progress, and model info."""
+    data = _get("/search/embedding-status")
+    _out(data)
+
+
+def cmd_toggle_embeddings(args) -> None:
+    """Enable or disable embedding generation."""
+    data = _post("/search/embedding-toggle", {"enabled": args.enabled})
+    _out(data)
+
+
+def cmd_semantic_search(args) -> None:
+    """Find code by natural language meaning using embeddings."""
+    data = _get("/search/semantic", q=args.query, limit=args.limit)
+    _out(data)
+
+
+def cmd_find_similar(args) -> None:
+    """Find functions with similar behavior by embedding distance."""
+    data = _get("/search/similar", symbol=args.symbol, file=args.file, limit=args.limit)
+    _out(data)
+
+
+def cmd_tools_docs(_args) -> None:
+    """Get full documentation for all MCP tools."""
+    data = _get("/tools")
+    _out(data)
+
+
 # ── Argument parser ───────────────────────────────────────────────────────────
 
 def build_parser() -> argparse.ArgumentParser:
@@ -620,6 +655,10 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("name",               help="Symbol name (partial match)")
     s.add_argument("--kind", default=None,
                    help="Kind filter: function|class|method|interface")
+    s.add_argument("--dir", default=None,
+                   help="Directory prefix filter (e.g. src/core)")
+    s.add_argument("--package", default=None,
+                   help="Package path filter (e.g. codeengine.core)")
 
     # file
     s = sub.add_parser("file", help="Find files by name pattern (fd)")
@@ -684,10 +723,18 @@ def build_parser() -> argparse.ArgumentParser:
     # callers
     s = sub.add_parser("callers", help="Who calls a given symbol?")
     s.add_argument("symbol_name", help="Exact symbol name")
+    s.add_argument("--dir", default=None,
+                   help="Directory prefix filter (e.g. src/core)")
+    s.add_argument("--package", default=None,
+                   help="Package path filter (e.g. codeengine.core)")
 
     # callees
     s = sub.add_parser("callees", help="What does a symbol call internally?")
     s.add_argument("symbol_name", help="Exact symbol name")
+    s.add_argument("--dir", default=None,
+                   help="Directory prefix filter (e.g. src/core)")
+    s.add_argument("--package", default=None,
+                   help="Package path filter (e.g. codeengine.core)")
 
     # signature
     s = sub.add_parser("signature", help="Get function signature + docstring only")
@@ -763,6 +810,28 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("symbol_name", help="Symbol name")
     s.add_argument("--depth", type=int, default=5, help="Max call chain depth (default: 5)")
 
+    # embedding-status
+    sub.add_parser("embedding-status", help="Check embedding status (enabled, progress, model)")
+
+    # toggle-embeddings
+    s = sub.add_parser("toggle-embeddings", help="Enable or disable embedding generation")
+    s.add_argument("enabled", type=lambda x: x.lower() == "true", nargs="?", default=True,
+                   help="true or false (default: true)")
+
+    # semantic-search
+    s = sub.add_parser("semantic-search", help="Find code by natural language meaning")
+    s.add_argument("query", help="Natural language query")
+    s.add_argument("--limit", type=int, default=10, help="Max results (default: 10)")
+
+    # find-similar
+    s = sub.add_parser("find-similar", help="Find functions with similar behavior")
+    s.add_argument("symbol", help="Symbol name to find similar ones for")
+    s.add_argument("--file", default=None, help="Optional file path filter")
+    s.add_argument("--limit", type=int, default=5, help="Max results (default: 5)")
+
+    # tools-docs
+    sub.add_parser("tools-docs", help="Get full documentation for all MCP tools")
+
     return p
 
 
@@ -797,6 +866,11 @@ HANDLERS = {
     "count-refs":       cmd_count_refs,
     "impact":           cmd_impact,
     "trace":            cmd_trace,
+    "embedding-status": cmd_embedding_status,
+    "toggle-embeddings": cmd_toggle_embeddings,
+    "semantic-search":  cmd_semantic_search,
+    "find-similar":     cmd_find_similar,
+    "tools-docs":       cmd_tools_docs,
 }
 
 if __name__ == "__main__":

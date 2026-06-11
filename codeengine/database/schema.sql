@@ -85,3 +85,10 @@ CREATE TABLE IF NOT EXISTS class_bases (
 CREATE INDEX IF NOT EXISTS idx_class_bases_class ON class_bases(class_id);
 CREATE INDEX IF NOT EXISTS idx_class_bases_base ON class_bases(base_name);
 
+CREATE TABLE IF NOT EXISTS embeddings (
+    symbol_id   INTEGER PRIMARY KEY REFERENCES symbols(id) ON DELETE CASCADE,
+    embedding   BLOB NOT NULL,  -- float32 vector (384 dims)
+    model       TEXT NOT NULL DEFAULT 'BAAI/bge-small-en-v1.5',
+    created_at  REAL NOT NULL
+);
+

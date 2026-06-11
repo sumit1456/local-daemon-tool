@@ -112,6 +112,8 @@ from codeengine.api.edit import router as edit_router
 from codeengine.api.build import router as build_router
 from codeengine.database.sqlite import init_db
 from codeengine.core.index_engine import index_repo, start_watcher, clear_index, stop_watcher
+from codeengine.core.embedding_engine import get_status as get_embedding_status
+from codeengine.api.search import _run_embedding
 from pydantic import BaseModel
 
 # Absolute path to the bundled static UI
@@ -238,6 +240,10 @@ async def reindex_repo(body: ReindexRequest):
     await clear_index()
     count = await index_repo(repo_path)
     start_watcher(repo_path)
+    # Auto-start embedding if toggle is ON
+    if get_embedding_status().get("enabled") and count > 0:
+        import asyncio
+        asyncio.create_task(_run_embedding())
     return {"status": "ok", "indexed": count, "repo": repo_path}
 
 
@@ -261,6 +267,9 @@ async def reindex_repo_stream(body: ReindexRequest):
                 count = await index_repo(body.repo_path, on_progress=on_progress)
                 await on_progress("watcher", {"repo": body.repo_path})
                 start_watcher(body.repo_path)
+                # Auto-start embedding if toggle is ON
+                if get_embedding_status().get("enabled") and count > 0:
+                    asyncio.create_task(_run_embedding())
             except Exception as exc:
                 await on_progress("error", {"message": str(exc)})
 
@@ -339,3 +348,223 @@ async def serve_index():
     if index.is_file():
         return FileResponse(str(index), media_type="text/html")
     return {"message": "Code Search Engine API — static UI not found."}
+
+
+@app.get("/tools")
+async def get_tools():
+    """Return comprehensive documentation about all tools, capabilities, and tradeoffs for agents."""
+    return {
+        "name": "CodeSearchEngine",
+        "version": "1.0.0",
+        "description": "MCP-based code search and editing engine with AST analysis, call graph, and dependency tracking.",
+        "tools": {
+            "search": {
+                "search_code": {
+                    "description": "Search source code using ripgrep. Returns matching lines with file, line number, and snippet.",
+                    "params": {"q": "string (required)", "path": "string (default: '.')", "lang": "python|javascript|typescript|java|go|rust", "limit": "int (default: 50)"},
+                    "token_cost": "~300-500 tokens",
+                    "use_when": "Finding text patterns, function names, variable references, string literals",
+                    "tradeoff": "Slower than native grep due to HTTP overhead, but integrates with other tools for context."
+                },
+                "search_symbol": {
+                    "description": "Search AST symbol index for functions, classes, methods by name. Faster and more precise than text search.",
+                    "params": {"name": "string (required)", "kind": "function|class|method|interface"},
+                    "token_cost": "~100-300 tokens",
+                    "use_when": "Finding exact symbol definitions, locating where a function/class is defined",
+                    "tradeoff": "Only finds definitions, not usages. Use get_edit_context or count_references for full picture."
+                },
+                "find_file": {
+                    "description": "Find files by name pattern using fd.",
+                    "params": {"pattern": "string (glob pattern)", "root": "string (default: '.')"},
+                    "token_cost": "~50-100 tokens",
+                    "use_when": "Locating files by name, finding config files, finding test files",
+                    "tradeoff": "Slower than native fd/glob, but useful when combined with other MCP tools."
+                },
+                "get_index": {
+                    "description": "Get file and symbol index for the repository. Cheap — no file reads.",
+                    "params": {"files": "list of strings", "dir": "directory prefix filter", "package": "package path filter", "q": "substring match on file path", "limit": "int (default: 50)", "offset": "int (default: 0)"},
+                    "token_cost": "~200-500 tokens",
+                    "use_when": "Getting overview of repo structure, finding files by directory, pagination",
+                    "tradeoff": "Good for scoped searches. Use for initial exploration."
+                },
+                "get_overview": {
+                    "description": "Get full repository overview including symbol call graph.",
+                    "params": {"files": "list of strings", "dir": "directory prefix filter", "package": "package path filter", "q": "substring match on file path", "limit": "int (default: 50)", "offset": "int (default: 0)"},
+                    "token_cost": "~500-1000 tokens",
+                    "use_when": "Understanding repo architecture, finding most connected files, top callers/callees",
+                    "tradeoff": "Expensive but gives complete picture of codebase structure."
+                }
+            },
+            "ast_extraction": {
+                "extract_function": {
+                    "description": "Extract exact source code of a single function using tree-sitter AST.",
+                    "params": {"file": "string (relative path)", "name": "string (exact function name)"},
+                    "token_cost": "~50-150 tokens",
+                    "use_when": "Reading a specific function without reading the whole file",
+                    "tradeoff": "Very efficient. Only returns the function body."
+                },
+                "extract_class": {
+                    "description": "Extract exact source code of a single class using tree-sitter AST.",
+                    "params": {"file": "string (relative path)", "name": "string (exact class name)"},
+                    "token_cost": "~100-300 tokens",
+                    "use_when": "Reading a specific class without reading the whole file",
+                    "tradeoff": "May be large for complex classes. Consider using get_edit_context for structured view."
+                },
+                "get_signature": {
+                    "description": "Get only the signature and docstring of a function — NOT the full body.",
+                    "params": {"file": "string", "line_start": "int", "line_end": "int"},
+                    "token_cost": "~30-80 tokens",
+                    "use_when": "Understanding function API without implementation details",
+                    "tradeoff": "Cheapest way to understand what a function does."
+                },
+                "get_body": {
+                    "description": "Get full function body by line range (no surrounding noise).",
+                    "params": {"file": "string", "line_start": "int", "line_end": "int"},
+                    "token_cost": "~200-500 tokens",
+                    "use_when": "Reading function implementation after locating it",
+                    "tradeoff": "Requires knowing line numbers. Use extract_function if you know the name."
+                }
+            },
+            "call_graph": {
+                "get_callers": {
+                    "description": "Find all functions that call the given symbol.",
+                    "params": {"symbol_name": "string (required)", "file": "string", "dir": "string", "package": "string"},
+                    "token_cost": "~200-500 tokens",
+                    "use_when": "Understanding who depends on a function, blast radius analysis",
+                    "tradeoff": "Essential for impact analysis. Use before modifying critical functions."
+                },
+                "get_callees": {
+                    "description": "Find all functions called by the given symbol.",
+                    "params": {"symbol_name": "string (required)", "file": "string", "dir": "string", "package": "string"},
+                    "token_cost": "~200-500 tokens",
+                    "use_when": "Understanding function dependencies, what a function relies on",
+                    "tradeoff": "Use with get_callers for full call graph picture."
+                },
+                "trace_execution": {
+                    "description": "Trace execution flow through the application from a given symbol.",
+                    "params": {"symbol_name": "string (required)", "max_depth": "int (default: 5)"},
+                    "token_cost": "~500-1000 tokens",
+                    "use_when": "Understanding call chains, debugging execution flow",
+                    "tradeoff": "Expensive but invaluable for complex debugging."
+                }
+            },
+            "dependencies": {
+                "get_imports": {
+                    "description": "Get all imports used by a file.",
+                    "params": {"file": "string (required, relative path)"},
+                    "token_cost": "~50-100 tokens",
+                    "use_when": "Understanding file dependencies",
+                    "tradeoff": "Quick overview of what a file needs."
+                },
+                "get_importers": {
+                    "description": "Find all files that import a given module (reverse dependency lookup).",
+                    "params": {"module": "string (required)"},
+                    "token_cost": "~200-500 tokens",
+                    "use_when": "Finding who depends on a module, blast radius before changes",
+                    "tradeoff": "Essential for safe refactoring."
+                },
+                "get_file_deps": {
+                    "description": "Get complete dependency picture for a file — both directions.",
+                    "params": {"file": "string (required)"},
+                    "token_cost": "~300-600 tokens",
+                    "use_when": "Full dependency analysis for a file",
+                    "tradeoff": "One call gives both imports and importers."
+                }
+            },
+            "analysis": {
+                "get_edit_context": {
+                    "description": "Get all structured context required to edit a symbol without reading the whole file.",
+                    "params": {"symbol": "string (required)", "file": "string", "dir": "string", "package": "string"},
+                    "token_cost": "~200-500 tokens",
+                    "use_when": "Before editing a function/class, understanding its context",
+                    "tradeoff": "Returns source, callers, callees, imports in one call. Very efficient for edit preparation."
+                },
+                "count_references": {
+                    "description": "Count how many times a symbol is referenced across the codebase.",
+                    "params": {"symbol_name": "string (required)"},
+                    "token_cost": "~100-300 tokens",
+                    "use_when": "Risk assessment before making changes",
+                    "tradeoff": "Quick check of how widely used a symbol is."
+                },
+                "impact_analysis": {
+                    "description": "Full impact assessment before changing a symbol.",
+                    "params": {"symbol_name": "string (required)"},
+                    "token_cost": "~500-1000 tokens",
+                    "use_when": "Before major refactoring, understanding blast radius",
+                    "tradeoff": "Most comprehensive impact view. Use for critical changes."
+                },
+                "get_defined_symbols": {
+                    "description": "Get all symbols defined in a file — functions, classes, methods, constants.",
+                    "params": {"file": "string (required)"},
+                    "token_cost": "~50-100 tokens",
+                    "use_when": "Quick file overview without reading the full file",
+                    "tradeoff": "Fast way to see what's in a file."
+                }
+            },
+            "editing": {
+                "preview_edit": {
+                    "description": "Stage a code edit and preview it as a unified diff WITHOUT writing to disk.",
+                    "params": {"file": "string", "old_code": "string", "new_code": "string"},
+                    "token_cost": "~100-200 tokens",
+                    "use_when": "Before applying any edit, to verify correctness",
+                    "tradeoff": "Always call before apply_edit. Returns edit_id."
+                },
+                "apply_edit": {
+                    "description": "Write a previewed edit to disk and automatically create a git commit.",
+                    "params": {"edit_id": "string (from preview_edit)"},
+                    "token_cost": "~50-100 tokens",
+                    "use_when": "After preview_edit confirms the change",
+                    "tradeoff": "Creates a git commit. Use undo_edit to revert if needed."
+                },
+                "preview_smart_edit": {
+                    "description": "Preview a smart block-based code edit as a unified diff WITHOUT writing to disk.",
+                    "params": {"file": "string", "new_code": "string"},
+                    "token_cost": "~100-200 tokens",
+                    "use_when": "Replacing entire blocks (functions, classes) with new code",
+                    "tradeoff": "Auto-detects which block to replace. More intelligent than preview_edit."
+                },
+                "apply_smart_edit": {
+                    "description": "Apply a smart edit preview to disk and create a git commit.",
+                    "params": {"edit_id": "string (from preview_smart_edit)"},
+                    "token_cost": "~50-100 tokens",
+                    "use_when": "After preview_smart_edit confirms the change",
+                    "tradeoff": "Creates a git commit. Use undo_edit to revert if needed."
+                },
+                "undo_edit": {
+                    "description": "Revert the last applied edit by running git revert HEAD.",
+                    "params": {},
+                    "token_cost": "~50-100 tokens",
+                    "use_when": "When an edit breaks things or is wrong",
+                    "tradeoff": "Creates a new revert commit. Does not delete history."
+                }
+            }
+        },
+        "workflow": {
+            "recommended": [
+                "1. Use get_index or search_symbol to locate symbols",
+                "2. Use get_edit_context to understand the symbol before editing",
+                "3. Use preview_edit or preview_smart_edit to stage changes",
+                "4. Use apply_edit or apply_smart_edit to commit",
+                "5. Use undo_edit if the change breaks things"
+            ],
+            "token_optimization": [
+                "Use extract_function/extract_class instead of reading full files",
+                "Use get_edit_context for structured context (callers, callees, imports)",
+                "Use get_defined_symbols for quick file overview",
+                "Use count_references before modifying widely-used symbols",
+                "Batch parallel tool calls when possible"
+            ]
+        },
+        "tradeoffs_summary": {
+            "mcp_vs_native": {
+                "slower_than_native": ["search_code (use native grep)", "find_file (use native fd/glob)", "get_index (use native ls/find)"],
+                "worth_the_overhead": ["extract_function/extract_class", "get_edit_context", "get_callers/get_callees", "trace_execution", "get_importers", "search_symbol", "get_file_deps"],
+                "rule_of_thumb": "Use native tools for file finding and simple text search. Use MCP for AST extraction, call graph analysis, dependency tracing, and structured context."
+            },
+            "token_costs": {
+                "cheap": ["get_defined_symbols (~50-80)", "get_signature (~30-80)", "find_file (~50-100)", "get_imports (~50-100)", "extract_function (~50-150)", "count_references (~100-300)", "search_symbol (~100-300)"],
+                "moderate": ["search_code (~300-500)", "get_edit_context (~200-500)", "get_callers (~200-500)", "get_callees (~200-500)", "get_body (~200-500)", "get_importers (~200-500)", "get_file_deps (~300-600)", "get_index (~200-500)"],
+                "expensive": ["get_overview (~500-1000)", "trace_execution (~500-1000)", "impact_analysis (~500-1000)", "extract_class (~100-300 for small, 500+ for large)"]
+            }
+        }
+    }

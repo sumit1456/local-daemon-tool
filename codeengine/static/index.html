@@ -856,6 +856,50 @@
     /* misc */
     .separator { height: 1px; background: var(--border-subtle); margin: 4px 0; }
 
+    /* ── TOGGLE SWITCH ── */
+    .toggle-switch {
+      position: relative;
+      display: inline-block;
+      width: 36px;
+      height: 20px;
+    }
+    .toggle-switch input {
+      opacity: 0;
+      width: 0;
+      height: 0;
+    }
+    .toggle-slider {
+      position: absolute;
+      cursor: pointer;
+      top: 0;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      background-color: var(--bg-active);
+      border: 1px solid var(--border-mid);
+      transition: 0.3s;
+      border-radius: 20px;
+    }
+    .toggle-slider:before {
+      position: absolute;
+      content: "";
+      height: 14px;
+      width: 14px;
+      left: 2px;
+      bottom: 2px;
+      background-color: var(--text-muted);
+      transition: 0.3s;
+      border-radius: 50%;
+    }
+    .toggle-switch input:checked + .toggle-slider {
+      background-color: var(--accent);
+      border-color: var(--accent);
+    }
+    .toggle-switch input:checked + .toggle-slider:before {
+      transform: translateX(16px);
+      background-color: #fff;
+    }
+
     /* ── AUTOCOMPLETE DROPDOWN ── */
     .ac-wrap {
       position: relative;
@@ -1179,6 +1223,16 @@
       <div class="logo-text">Code<span>Engine</span></div>
     </div>
 
+    <!-- Embedding Toggle (before repo selector) -->
+    <div style="display:flex;align-items:center;gap:8px;margin-left:20px;padding:6px 12px;background:var(--bg-elevated);border:1px solid var(--border-mid);border-radius:var(--radius-sm);">
+      <label style="font-size:12px;color:var(--text-secondary);white-space:nowrap;">🧠 Embed</label>
+      <label class="toggle-switch">
+        <input type="checkbox" id="embedding-toggle">
+        <span class="toggle-slider"></span>
+      </label>
+      <span id="embedding-status" style="font-size:11px;color:var(--text-muted);min-width:50px;">OFF</span>
+    </div>
+
     <div class="topbar-spacer"></div>
 
     <!-- Repo path -->
@@ -1204,6 +1258,9 @@
       </div>
       <div class="nav-item" data-page="file-finder" id="nav-file-finder">
         <span class="nav-icon">📂</span> File Finder
+      </div>
+      <div class="nav-item" data-page="semantic" id="nav-semantic">
+        <span class="nav-icon">🧠</span> Semantic Search
       </div>
 
       <div class="separator"></div>
@@ -1322,6 +1379,34 @@
             <div class="empty-icon">📂</div>
             <div class="empty-title">Find files</div>
             <div class="empty-sub">Search by filename pattern. Uses fd for fast fuzzy file discovery.</div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ════ SEMANTIC SEARCH PAGE ════ -->
+      <section class="page" id="page-semantic">
+        <div class="page-header">
+          <div class="page-title">🧠 Semantic Search</div>
+          <div class="search-row">
+            <div class="search-input-wrap" style="flex:2">
+              <span class="search-icon">⌕</span>
+              <input id="semantic-query" type="text" placeholder="Natural language query (e.g. 'handle user authentication')" />
+            </div>
+            <input id="semantic-limit" type="number" value="10" min="1" max="50"
+              style="width:70px; height:40px; padding:0 10px; background:var(--bg-elevated);
+                     border:1.5px solid var(--border-mid); border-radius:var(--radius-md);
+                     color:var(--text-primary); font-size:13px; outline:none;" />
+            <button class="btn btn-primary" id="semantic-search-btn">Semantic Search</button>
+          </div>
+          <div style="margin-top:8px;font-size:11px;color:var(--text-muted);">
+            Requires embeddings enabled in topbar. First use may take a few seconds to load model.
+          </div>
+        </div>
+        <div class="results-area" id="semantic-results">
+          <div class="empty-state">
+            <div class="empty-icon">🧠</div>
+            <div class="empty-title">Semantic Search</div>
+            <div class="empty-sub">Enter a natural language query to find code by meaning, not just keywords.</div>
           </div>
         </div>
       </section>
@@ -1479,6 +1564,7 @@
             <button class="btn btn-primary" id="idx-load-btn">Load Index</button>
           </div>
         </div>
+        
         <div class="results-area" id="idx-results">
           <div class="empty-state">
             <div class="empty-icon">📋</div>

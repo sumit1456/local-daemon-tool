@@ -1928,16 +1928,38 @@ async function loadFunctionExtract(type) {
 document.getElementById('browse-btn').addEventListener('click', async () => {
   const current = document.getElementById('repo-path').value.trim();
 
-  if (window.pywebview) {
-    // Running inside pywebview native window — use native OS folder dialog
-    const chosen = await window.pywebview.api.pick_folder(current);
-    if (chosen) {
-      document.getElementById('repo-path').value = chosen;
-      toast('Repo set: ' + chosen, 'success');
-      await triggerReindex(chosen);
+  if (window.pywebview && window.pywebview.api && typeof window.pywebview.api.pick_folder === 'function') {
+    try {
+      const chosen = await window.pywebview.api.pick_folder(current);
+      if (chosen) {
+        document.getElementById('repo-path').value = chosen;
+        toast('Repo set: ' + chosen, 'success');
+        await triggerReindex(chosen);
+      }
+    } catch (e) {
+      console.error('pywebview pick_folder failed:', e);
+      toast('Folder picker failed — type the path manually', 'error');
     }
   } else {
-    // Fallback for plain browser: simple prompt
+    // pywebview not ready yet — wait briefly then retry once
+    if (window.pywebview) {
+      await new Promise(r => setTimeout(r, 500));
+      if (window.pywebview.api && typeof window.pywebview.api.pick_folder === 'function') {
+        try {
+          const chosen = await window.pywebview.api.pick_folder(current);
+          if (chosen) {
+            document.getElementById('repo-path').value = chosen;
+            toast('Repo set: ' + chosen, 'success');
+            await triggerReindex(chosen);
+          }
+        } catch (e) {
+          console.error('pywebview pick_folder failed:', e);
+          toast('Folder picker failed — type the path manually', 'error');
+        }
+        return;
+      }
+    }
+    // Fallback: prompt for path input
     const input = prompt('Enter repository path:', current || '.');
     if (input !== null && input.trim()) {
       const chosen = input.trim();
@@ -2105,6 +2127,24 @@ async function triggerReindex(path) {
               statusDot.className = '';
               statusDot.title = 'Server ready';
               toast(`Indexed ${evt.indexed} files ✅`, 'success');
+              
+              // Auto-start embedding if toggle is ON
+              const embedToggle = document.getElementById('embedding-toggle');
+              if (embedToggle && embedToggle.checked) {
+                appendLogLine('Starting embeddings...', 'log-start');
+                api('/search/embedding-toggle', {
+                  method: 'POST',
+                  body: JSON.stringify({ enabled: true })
+                }).then(() => {
+                  appendLogLine('Embedding generation started', 'log-indexed');
+                  startEmbeddingPoll();
+                }).catch(err => {
+                  appendLogLine('Failed to start embedding: ' + err.message, 'log-error');
+                  toast('Failed to start embedding: ' + err.message, 'error');
+                });
+              } else {
+                stopEmbeddingPoll();
+              }
               break;
           }
         } catch (_) { /* ignore malformed lines */ }
@@ -2240,11 +2280,197 @@ setTimeout(() => {
   initAllAutocompletes();
   initModuleAutocomplete();
 
-  // Docker mode: hide browse button, show hint
+  // Docker/headless mode (no pywebview at all): hide browse button, show hint
+  // pywebview is injected AFTER page load, so check again after a delay
+  const browseBtn = document.getElementById('browse-btn');
+  const repoPath = document.getElementById('repo-path');
+
   if (!window.pywebview) {
-    const browseBtn = document.getElementById('browse-btn');
+    // Not pywebview — could be headless Docker OR pywebview just hasn't loaded yet
+    // Hide optimistically, pywebviewready will restore it
     browseBtn.style.display = 'none';
-    const repoPath = document.getElementById('repo-path');
     repoPath.placeholder = 'e.g. /workspace/Downloads/dev-tool';
   }
 }, 0);
+
+// pywebview 5.x fires this event when window.pywebview.api is ready
+window.addEventListener('pywebviewready', () => {
+  console.log('pywebview API ready');
+  // Restore browse button — we're in native desktop mode
+  const browseBtn = document.getElementById('browse-btn');
+  const repoPath = document.getElementById('repo-path');
+  if (browseBtn) browseBtn.style.display = '';
+  if (repoPath) repoPath.placeholder = 'C:\\path\\to\\your\\repo';
+});
+
+/* ═══════════════════════════════════════════════════════════
+   EMBEDDING TOGGLE
+   Lazy-load embeddings on user request
+═══════════════════════════════════════════════════════════ */
+let embeddingPollInterval = null;
+
+function startEmbeddingPoll() {
+  stopEmbeddingPoll();
+  const embeddingStatusEl = document.getElementById('embedding-status');
+  
+  embeddingPollInterval = setInterval(async () => {
+    try {
+      const status = await api('/search/embedding-status');
+      updateEmbeddingStatusText(status);
+      
+      if (status.current_file === 'Done' || status.error) {
+        stopEmbeddingPoll();
+        toast(status.error ? 'Embedding error: ' + status.error : 'Embedding complete!', status.error ? 'error' : 'success');
+      }
+    } catch (e) {}
+  }, 1000);
+}
+
+function stopEmbeddingPoll() {
+  if (embeddingPollInterval) {
+    clearInterval(embeddingPollInterval);
+    embeddingPollInterval = null;
+  }
+}
+
+function updateEmbeddingStatusText(status) {
+  const embeddingStatusEl = document.getElementById('embedding-status');
+  if (!embeddingStatusEl) return;
+  
+  if (status.loading) {
+    embeddingStatusEl.textContent = 'Loading...';
+    embeddingStatusEl.style.color = 'var(--warning)';
+  } else if (status.enabled) {
+    const count = status.embedded_count || 0;
+    const total = status.total_symbols || 0;
+    if (total > 0) {
+      embeddingStatusEl.textContent = `${count}/${total}`;
+    } else {
+      embeddingStatusEl.textContent = 'Starting...';
+    }
+    embeddingStatusEl.style.color = 'var(--accent)';
+  } else if (status.current_file === 'Done') {
+    embeddingStatusEl.textContent = 'Ready';
+    embeddingStatusEl.style.color = 'var(--success)';
+  } else if (status.error) {
+    embeddingStatusEl.textContent = 'Error';
+    embeddingStatusEl.style.color = 'var(--danger)';
+  } else {
+    embeddingStatusEl.textContent = 'OFF';
+    embeddingStatusEl.style.color = 'var(--text-muted)';
+  }
+}
+
+// Init embedding toggle
+const embeddingToggle = document.getElementById('embedding-toggle');
+if (embeddingToggle) {
+  // Load initial status
+  api('/search/embedding-status').then(status => {
+    embeddingToggle.checked = status.enabled || false;
+    updateEmbeddingStatusText(status);
+  }).catch(() => {});
+
+  // Toggle handler — enable/disable embedding, but only run after indexing finishes
+  embeddingToggle.addEventListener('change', () => {
+    const enabled = embeddingToggle.checked;
+    if (!enabled) {
+      stopEmbeddingPoll();
+      api('/search/embedding-toggle', {
+        method: 'POST',
+        body: JSON.stringify({ enabled: false })
+      }).catch(() => {});
+      toast('Embedding stopped', 'info');
+    } else if (!isIndexing) {
+      // Not indexing — start embedding now
+      appendLogLine('Starting embeddings...', 'log-start');
+      api('/search/embedding-toggle', {
+        method: 'POST',
+        body: JSON.stringify({ enabled: true })
+      }).then(() => {
+        appendLogLine('Embedding generation started', 'log-indexed');
+        startEmbeddingPoll();
+        toast('Embedding started', 'success');
+      }).catch(err => {
+        toast('Failed to start embedding: ' + err.message, 'error');
+        embeddingToggle.checked = false;
+      });
+    } else {
+      // Indexing in progress — will start after it finishes
+      toast('Embedding will start after indexing', 'info');
+    }
+  });
+}
+
+// Init semantic search
+const semanticSearchBtn = document.getElementById('semantic-search-btn');
+const semanticQueryInput = document.getElementById('semantic-query');
+const semanticLimitInput = document.getElementById('semantic-limit');
+const semanticResults = document.getElementById('semantic-results');
+
+if (semanticSearchBtn) {
+  semanticSearchBtn.addEventListener('click', async () => {
+    const query = semanticQueryInput.value.trim();
+    if (!query) {
+      toast('Enter a search query', 'error');
+      return;
+    }
+
+    const limit = parseInt(semanticLimitInput.value) || 10;
+    loading(semanticResults);
+
+    try {
+      const data = await api(`/search/semantic?q=${encodeURIComponent(query)}&limit=${limit}`);
+      
+      if (!data.results || data.results.length === 0) {
+        empty(semanticResults, '🧠', 'No results found', 'Try a different query or enable embeddings first.');
+        return;
+      }
+
+      let html = `<div class="stats-bar"><span class="stats-badge">${data.results.length} results</span><span>Query: ${escHtml(query)}</span></div>`;
+      
+      for (const r of data.results) {
+        const distance = r.distance.toFixed(3);
+        const similarity = ((1 - r.distance) * 100).toFixed(1);
+        html += `
+          <div class="symbol-card" data-file="${escHtml(r.file)}" data-line="${r.line_start || 0}" data-name="${escHtml(r.name)}" data-kind="${escHtml(r.kind || 'function')}">
+            <span class="symbol-kind kind-${r.kind || 'function'}">${r.kind || 'func'}</span>
+            <span class="symbol-name">${escHtml(r.name)}</span>
+            <span class="symbol-file">${escHtml(r.file)}</span>
+            <span class="symbol-lines" title="Similarity: ${similarity}%">${similarity}%</span>
+          </div>`;
+      }
+      
+      semanticResults.innerHTML = html;
+
+      // Add click handlers to fetch and show code
+      semanticResults.querySelectorAll('.symbol-card').forEach(card => {
+        card.addEventListener('click', async () => {
+          const file = card.dataset.file;
+          const line = parseInt(card.dataset.line) || 0;
+          const name = card.dataset.name;
+          const kind = card.dataset.kind;
+
+          try {
+            const data = await api(`/search/file-read?file=${encodeURIComponent(file)}`);
+            if (data.content) {
+              const lang = detectLang(file);
+              openCodePanel(`${name} (${file})`, data.content, lang);
+            }
+          } catch (err) {
+            toast('Failed to load file: ' + err.message, 'error');
+          }
+        });
+      });
+    } catch (err) {
+      toast('Semantic search failed: ' + err.message, 'error');
+      empty(semanticResults, '❌', 'Search failed', err.message);
+    }
+  });
+
+  // Enter key handler
+  if (semanticQueryInput) {
+    semanticQueryInput.addEventListener('keypress', (e) => {
+      if (e.key === 'Enter') semanticSearchBtn.click();
+    });
+  }
+}
