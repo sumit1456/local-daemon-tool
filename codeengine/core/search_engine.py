@@ -397,10 +397,23 @@ async def find_file(pattern: str, root: str) -> list[str]:
         raise ValueError(
             "pattern must be non-empty. Pass '*' to list all files."
         )
+    if pattern == "*":
+        pattern = "."
     fd_path = _get_binary_path("fd")
     args = [fd_path, "--type", "f", pattern, root]
     stdout = await asyncio.to_thread(_run_subprocess, args)
-    return [l.strip() for l in stdout.decode(errors="replace").splitlines() if l.strip()]
+    
+    paths = []
+    for l in stdout.decode(errors="replace").splitlines():
+        line = l.strip()
+        if not line:
+            continue
+        try:
+            rel = os.path.relpath(line, root).replace("\\", "/")
+            paths.append(rel)
+        except Exception:
+            paths.append(line.replace("\\", "/"))
+    return paths
 
 
 # ---------------------------------------------------------------------------

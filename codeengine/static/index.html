@@ -239,6 +239,7 @@
       padding: 0 12px;
       height: 40px;
       transition: var(--transition);
+      position: relative;
     }
     .search-input-wrap:focus-within {
       border-color: var(--accent);
@@ -854,6 +855,94 @@
 
     /* misc */
     .separator { height: 1px; background: var(--border-subtle); margin: 4px 0; }
+
+    /* ── AUTOCOMPLETE DROPDOWN ── */
+    .ac-wrap {
+      position: relative;
+      display: contents;
+    }
+    .ac-wrap > input {
+      width: 100%;
+    }
+    .ac-dropdown {
+      position: absolute;
+      top: calc(100% + 8px);
+      left: -13px;
+      right: -13px;
+      z-index: 500;
+      background: #1a1e2a;
+      border: 1.5px solid var(--border-accent);
+      border-radius: var(--radius-md);
+      box-shadow: 0 8px 32px rgba(0,0,0,0.6), 0 0 0 1px rgba(99,179,237,0.08);
+      max-height: 260px;
+      overflow-y: auto;
+      display: none;
+      flex-direction: column;
+      animation: acSlideDown 0.14s ease;
+      min-width: 100%;
+    }
+    .ac-dropdown.open { display: flex; }
+    @keyframes acSlideDown {
+      from { opacity: 0; transform: translateY(-6px); }
+      to   { opacity: 1; transform: translateY(0); }
+    }
+    .ac-item {
+      display: flex; align-items: center; gap: 8px;
+      padding: 8px 12px;
+      cursor: pointer;
+      border-bottom: 1px solid rgba(255,255,255,0.04);
+      transition: background var(--transition);
+      min-width: 0;
+    }
+    .ac-item:last-child { border-bottom: none; }
+    .ac-item:hover, .ac-item.ac-selected {
+      background: var(--accent-glow);
+    }
+    .ac-item-icon {
+      font-size: 12px; flex-shrink: 0;
+      width: 16px; text-align: center;
+    }
+    .ac-item-main {
+      flex: 1; min-width: 0;
+      display: flex; flex-direction: column; gap: 1px;
+    }
+    .ac-item-name {
+      font-family: var(--font-mono); font-size: 12.5px;
+      color: var(--text-primary);
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    }
+    .ac-item-sub {
+      font-family: var(--font-mono); font-size: 10.5px;
+      color: var(--text-muted);
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    }
+    .ac-item-kind {
+      font-size: 10px; font-weight: 700; letter-spacing: 0.06em;
+      text-transform: uppercase;
+      padding: 1px 6px; border-radius: 3px;
+      flex-shrink: 0;
+    }
+    .ac-kind-file     { background: rgba(99,179,237,0.14); color: var(--accent); }
+    .ac-kind-function { background: rgba(66,153,225,0.18); color: #90cdf4; }
+    .ac-kind-class    { background: rgba(159,122,234,0.18); color: #b794f4; }
+    .ac-kind-method   { background: rgba(104,211,145,0.18); color: #68d391; }
+    .ac-kind-dir      { background: rgba(246,173,85,0.14); color: var(--warning); }
+    .ac-kind-pkg      { background: rgba(104,211,145,0.14); color: var(--success); }
+    .ac-item em {
+      color: var(--warning); font-style: normal; font-weight: 700;
+    }
+    .ac-empty {
+      padding: 10px 14px; font-size: 12px; color: var(--text-muted); text-align: center;
+    }
+    .ac-loading {
+      padding: 10px 14px; font-size: 12px; color: var(--accent);
+      display: flex; align-items: center; gap: 8px;
+    }
+    .ac-loading::before {
+      content: ''; width: 12px; height: 12px;
+      border: 2px solid var(--bg-elevated); border-top-color: var(--accent);
+      border-radius: 50%; animation: spin 0.6s linear infinite; flex-shrink: 0;
+    }
 
     /* ── MODE TOGGLE PILL ── */
     .mode-toggle {
@@ -1473,8 +1562,7 @@
           <div class="search-row" id="import-file-row" style="margin-top:10px">
             <div class="search-input-wrap" style="flex:2">
               <span class="search-icon">📄</span>
-              <input id="ig-file" type="text" placeholder="Relative file path (e.g. codeengine/core/search.py)" list="ig-file-list" />
-              <datalist id="ig-file-list"></datalist>
+              <input id="ig-file" type="text" placeholder="Relative file path (e.g. codeengine/core/search.py)" />
             </div>
             <button class="btn btn-primary" id="ig-file-btn">Show Imports</button>
             <button class="btn btn-secondary" id="ig-file-deps-btn">Full Deps</button>
@@ -1504,8 +1592,7 @@
           <div class="search-row">
             <div class="search-input-wrap" style="flex:2">
               <span class="search-icon">📄</span>
-              <input id="fe-file" type="text" placeholder="Relative file path (e.g. codeengine/app.py)" list="fe-file-list" />
-              <datalist id="fe-file-list"></datalist>
+              <input id="fe-file" type="text" placeholder="Relative file path (e.g. codeengine/app.py)" />
             </div>
             <div class="search-input-wrap">
               <span class="search-icon">📍</span>

@@ -192,13 +192,53 @@ app.include_router(search_router)
 app.include_router(edit_router)
 app.include_router(build_router)
 
+@app.get("/workspace")
+async def get_workspace():
+    """Return the workspace path mounted inside the container (or host path)."""
+    ws = os.environ.get("REPO_PATH", "/workspace")
+    exists = Path(ws).is_dir()
+    return {"path": ws, "exists": exists}
+
+
+@app.get("/workspace/list")
+async def list_workspace():
+    """List subdirectories inside /workspace that look like repos."""
+    ws = Path("/workspace")
+    if not ws.is_dir():
+        return {"repos": [], "workspace": str(ws)}
+    repos = []
+    for entry in sorted(ws.iterdir()):
+        if not entry.is_dir():
+            continue
+        if entry.name.startswith(".") or entry.name in ("__pycache__", "node_modules", ".venv", "venv"):
+            continue
+        has_git = (entry / ".git").is_dir()
+        # Count code files recursively (shallow)
+        code_exts = {".py", ".js", ".ts", ".java", ".go", ".rs", ".rb", ".cpp", ".c", ".h"}
+        code_count = sum(1 for f in entry.rglob("*") if f.suffix in code_exts and ".venv" not in str(f) and "node_modules" not in str(f))
+        repos.append({
+            "name": entry.name,
+            "path": str(entry),
+            "has_git": has_git,
+            "code_files": code_count,
+        })
+    return {"repos": repos, "workspace": str(ws)}
+
 @app.post("/reindex")
 async def reindex_repo(body: ReindexRequest):
-    os.environ["REPO_PATH"] = body.repo_path
+    repo_path = body.repo_path
+    # Resolve relative paths against /workspace inside the container
+    p = Path(repo_path)
+    if not p.is_absolute():
+        ws = Path("/workspace")
+        candidate = ws / repo_path
+        if candidate.is_dir():
+            repo_path = str(candidate)
+    os.environ["REPO_PATH"] = repo_path
     await clear_index()
-    count = await index_repo(body.repo_path)
-    start_watcher(body.repo_path)
-    return {"status": "ok", "indexed": count, "repo": body.repo_path}
+    count = await index_repo(repo_path)
+    start_watcher(repo_path)
+    return {"status": "ok", "indexed": count, "repo": repo_path}
 
 
 @app.post("/reindex/stream")

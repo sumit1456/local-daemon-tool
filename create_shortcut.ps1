@@ -2,7 +2,8 @@
 # Run this ONCE to create a permanent Desktop shortcut for Code Search Engine.
 # Usage:  Right-click → "Run with PowerShell"   OR   powershell -File create_shortcut.ps1
 
-$ProjectDir = "C:\Users\SUMIT\Downloads\dev-tool\local-daemon-tool"
+$ProjectDir = $PSScriptRoot
+if (-not $ProjectDir) { $ProjectDir = Split-Path -Parent $MyInvocation.MyCommand.Path }
 $PythonW    = Join-Path $ProjectDir ".venv\Scripts\pythonw.exe"
 $Script     = Join-Path $ProjectDir "launcher.pyw"
 $Desktop    = [Environment]::GetFolderPath("Desktop")

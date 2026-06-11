@@ -65,6 +65,47 @@ class StreamToLogger:
 logger.info("Launcher started.")
 logger.info(f"Site packages path injected: {_venv_site}")
 
+# ── Verify .venv exists — auto-setup if missing ─────────────────────────────
+_venv_python = os.path.join(_here, ".venv", "Scripts", "python.exe")
+if not os.path.isfile(_venv_python):
+    setup_bat = os.path.join(_here, "setup.bat")
+    if os.path.isfile(setup_bat):
+        logger.info(".venv not found, running setup.bat ...")
+        try:
+            import tkinter as tk
+            from tkinter import messagebox
+            root = tk.Tk()
+            root.withdraw()
+            messagebox.showinfo(
+                "First-Time Setup",
+                "Virtual environment not found.\n\n"
+                "Running setup.bat to install dependencies.\n"
+                "This may take a few minutes..."
+            )
+            root.destroy()
+        except Exception:
+            pass
+        subprocess.run(["cmd", "/c", setup_bat], cwd=_here)
+        # Re-check after setup
+        if not os.path.isfile(_venv_python):
+            logger.error("setup.bat completed but .venv still missing.")
+            sys.exit(1)
+        logger.info("Setup complete, continuing launch.")
+    else:
+        try:
+            import tkinter as tk
+            from tkinter import messagebox
+            root = tk.Tk()
+            root.withdraw()
+            messagebox.showerror(
+                "Virtual Environment Not Found",
+                f"No .venv found at:\n{_venv_python}\n\n"
+                "Run setup.bat first to install dependencies."
+            )
+        except Exception:
+            pass
+        sys.exit(1)
+
 # ── Try imports and fail gracefully with GUI if packages are missing ────────
 try:
     import tkinter as tk

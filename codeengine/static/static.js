@@ -41,6 +41,353 @@ function getRepo() {
 }
 
 /* ═══════════════════════════════════════════════════════════
+   SMART AUTOCOMPLETE ENGINE
+   Supports: file paths, symbol names, directories, packages
+═══════════════════════════════════════════════════════════ */
+
+// Cache to avoid duplicate API calls
+const _acCache = {};
+
+// Active dropdown tracker (close others when one opens)
+let _acActive = null;
+
+function _acDebounce(fn, delay = 220) {
+  let t;
+  return (...args) => { clearTimeout(t); t = setTimeout(() => fn(...args), delay); };
+}
+
+function _highlightMatch(text, query) {
+  if (!query) return escHtml(text);
+  const escaped = query.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  return escHtml(text).replace(new RegExp(`(${escaped})`, 'gi'), '<em>$1</em>');
+}
+
+function _acFileIcon(path) {
+  const ext = (path || '').split('.').pop().toLowerCase();
+  const map = { py:'🐍', js:'🟨', ts:'🔷', java:'☕', go:'🐹', rs:'🦀',
+                html:'🌐', css:'🎨', json:'📋', md:'📝', txt:'📄',
+                yaml:'⚙️', yml:'⚙️', toml:'⚙️', sh:'💻' };
+  return map[ext] || '📄';
+}
+
+function _acKindIcon(kind) {
+  return { function:'ƒ', class:'◆', method:'⬡', interface:'⬢' }[kind] || '•';
+}
+
+/**
+ * Create a smart autocomplete on an <input> element.
+ *
+ * @param {HTMLInputElement} input   - The input to attach to
+ * @param {Object}           opts
+ *   opts.type     - 'file' | 'symbol' | 'dir' | 'package'
+ *   opts.onSelect - callback(value, item) when user picks an item
+ *   opts.delay    - debounce ms (default 220)
+ */
+function attachAutocomplete(input, opts = {}) {
+  const { type = 'file', onSelect = null, delay = 220, multi = false } = opts;
+
+  function getCurrentQuery() {
+    const val = input.value;
+    if (multi) {
+      const parts = val.split(',');
+      return parts[parts.length - 1].trim();
+    }
+    return val.trim();
+  }
+
+  // Create dropdown element inside the parent .search-input-wrap
+  const wrap = input.closest('.search-input-wrap');
+  if (!wrap) return;
+
+  const dropdown = document.createElement('div');
+  dropdown.className = 'ac-dropdown';
+  dropdown.setAttribute('role', 'listbox');
+  wrap.appendChild(dropdown);
+
+  let _items = [];
+  let _selIdx = -1;
+  let _open = false;
+  let _lastQ = '';
+
+  function openDropdown() {
+    if (_acActive && _acActive !== dropdown) {
+      _acActive.classList.remove('open');
+    }
+    dropdown.classList.add('open');
+    _acActive = dropdown;
+    _open = true;
+  }
+
+  function closeDropdown() {
+    dropdown.classList.remove('open');
+    _open = false;
+    _selIdx = -1;
+    if (_acActive === dropdown) _acActive = null;
+  }
+
+  function selectIdx(idx) {
+    const rows = dropdown.querySelectorAll('.ac-item');
+    rows.forEach(r => r.classList.remove('ac-selected'));
+    if (idx >= 0 && idx < rows.length) {
+      rows[idx].classList.add('ac-selected');
+      rows[idx].scrollIntoView({ block: 'nearest' });
+      _selIdx = idx;
+    }
+  }
+
+  function renderItems(items, query) {
+    _items = items;
+    _selIdx = -1;
+    if (!items.length) {
+      dropdown.innerHTML = `<div class="ac-empty">No results for "${escHtml(query)}"</div>`;
+      openDropdown();
+      return;
+    }
+
+    dropdown.innerHTML = items.map((item, i) => {
+      let icon = '', kindBadge = '', mainText = '', subText = '';
+
+      if (type === 'file') {
+        const basename = item.value.split(/[/\\]/).pop();
+        const dirPart  = item.value.replace(/[/\\][^/\\]+$/, '');
+        icon      = `<span class="ac-item-icon">${_acFileIcon(item.value)}</span>`;
+        kindBadge = `<span class="ac-item-kind ac-kind-file">FILE</span>`;
+        mainText  = _highlightMatch(basename, query);
+        subText   = dirPart !== item.value ? escHtml(dirPart) : '';
+      } else if (type === 'symbol') {
+        const kindMap = { function:'ac-kind-function', class:'ac-kind-class',
+                          method:'ac-kind-method', interface:'ac-kind-method' };
+        icon      = `<span class="ac-item-icon">${_acKindIcon(item.kind)}</span>`;
+        kindBadge = `<span class="ac-item-kind ${kindMap[item.kind] || 'ac-kind-file'}">${item.kind}</span>`;
+        mainText  = _highlightMatch(item.value, query);
+        subText   = item.file ? escHtml(item.file.split(/[/\\]/).pop()) : '';
+      } else if (type === 'dir') {
+        icon      = `<span class="ac-item-icon">📁</span>`;
+        kindBadge = `<span class="ac-item-kind ac-kind-dir">DIR</span>`;
+        mainText  = _highlightMatch(item.value, query);
+        subText   = '';
+      } else if (type === 'package') {
+        icon      = `<span class="ac-item-icon">📦</span>`;
+        kindBadge = `<span class="ac-item-kind ac-kind-pkg">PKG</span>`;
+        mainText  = _highlightMatch(item.value, query);
+        subText   = '';
+      }
+
+      return `<div class="ac-item" role="option" data-idx="${i}">
+        ${icon}
+        <div class="ac-item-main">
+          <span class="ac-item-name">${mainText}</span>
+          ${subText ? `<span class="ac-item-sub">${subText}</span>` : ''}
+        </div>
+        ${kindBadge}
+      </div>`;
+    }).join('');
+
+    // Click handler
+    dropdown.querySelectorAll('.ac-item').forEach(el => {
+      el.addEventListener('mousedown', e => {
+        e.preventDefault(); // don't blur input
+        const idx = parseInt(el.dataset.idx);
+        pickItem(idx);
+      });
+    });
+
+    openDropdown();
+  }
+
+  function pickItem(idx) {
+    const item = _items[idx];
+    if (!item) return;
+    if (multi) {
+      const parts = input.value.split(',');
+      parts[parts.length - 1] = (parts.length > 1 ? ' ' : '') + item.value;
+      input.value = parts.join(',') + ', ';
+    } else {
+      input.value = item.value;
+    }
+    closeDropdown();
+    if (onSelect) onSelect(item.value, item);
+    input.dispatchEvent(new Event('input'));
+  }
+
+  // ── Fetch logic per type ──
+  async function fetchSuggestions(query) {
+    const cacheKey = `${type}:${query}`;
+    if (_acCache[cacheKey]) return _acCache[cacheKey];
+
+    let items = [];
+    try {
+      if (type === 'file') {
+        const q = query || '*';
+        const params = new URLSearchParams({ pattern: q, root: getRepo() });
+        const data = await fetch(`${BASE}/search/file?${params}`).then(r => r.json());
+        items = (Array.isArray(data) ? data : []).map(f => ({ value: f }));
+      } else if (type === 'symbol') {
+        if (query.length < 2) return [];
+        const params = new URLSearchParams({ name: query });
+        const data = await fetch(`${BASE}/search/symbol?${params}`).then(r => r.json());
+        items = (Array.isArray(data) ? data : []).map(s => ({
+          value: s.name, kind: s.kind, file: s.file,
+          line_start: s.line_start, line_end: s.line_end
+        }));
+      } else if (type === 'dir' || type === 'package') {
+        // Derive dirs/packages from all files in the repo (cache the file list to avoid redundant requests)
+        const repo = getRepo();
+        const cacheFileKey = `all-files:${repo}`;
+        let files = _acCache[cacheFileKey];
+        if (!files) {
+          const params = new URLSearchParams({ pattern: '*', root: repo });
+          files = await fetch(`${BASE}/search/file?${params}`)
+            .then(r => r.json())
+            .catch(() => []);
+          _acCache[cacheFileKey] = files;
+        }
+        const seen = new Set();
+        if (Array.isArray(files)) {
+          if (type === 'dir') {
+            files.forEach(f => {
+              const parts = f.replace(/\\/g, '/').split('/');
+              // collect all parent directories
+              for (let i = 1; i < parts.length; i++) {
+                const d = parts.slice(0, i).join('/');
+                if (d && !seen.has(d)) { seen.add(d); items.push({ value: d }); }
+              }
+            });
+          } else {
+            // packages: dot-notation of directory paths containing __init__.py
+            files.forEach(f => {
+              const norm = f.replace(/\\/g, '/');
+              if (norm.endsWith('__init__.py')) {
+                const pkg = norm.replace('/__init__.py', '').replace(/\//g, '.');
+                if (!seen.has(pkg)) { seen.add(pkg); items.push({ value: pkg }); }
+              }
+            });
+          }
+        }
+        if (query) {
+          items = items.filter(it => it.value.toLowerCase().includes(query.toLowerCase()));
+        }
+      }
+    } catch (_) {}
+
+    _acCache[cacheKey] = items;
+    return items;
+  }
+
+  const debouncedFetch = _acDebounce(async (query) => {
+    if (!query && type !== 'file') { closeDropdown(); return; }
+    dropdown.innerHTML = `<div class="ac-loading">Searching…</div>`;
+    openDropdown();
+    const items = await fetchSuggestions(query);
+    // Only render if still the same query
+    if (getCurrentQuery() === _lastQ) renderItems(items, query);
+  }, delay);
+
+  // ── Event listeners ──
+  input.addEventListener('input', () => {
+    _lastQ = getCurrentQuery();
+    if (!_lastQ && type !== 'file') { closeDropdown(); return; }
+    debouncedFetch(_lastQ);
+  });
+
+  input.addEventListener('focus', () => {
+    _lastQ = getCurrentQuery();
+    if (_lastQ || type === 'file') debouncedFetch(_lastQ);
+  });
+
+  input.addEventListener('keydown', e => {
+    if (!_open) return;
+    const rows = dropdown.querySelectorAll('.ac-item');
+    if (e.key === 'ArrowDown') {
+      e.preventDefault();
+      selectIdx(Math.min(_selIdx + 1, rows.length - 1));
+    } else if (e.key === 'ArrowUp') {
+      e.preventDefault();
+      selectIdx(Math.max(_selIdx - 1, 0));
+    } else if (e.key === 'Enter') {
+      if (_selIdx >= 0) { e.preventDefault(); pickItem(_selIdx); }
+      else closeDropdown();
+    } else if (e.key === 'Escape') {
+      closeDropdown();
+    } else if (e.key === 'Tab') {
+      if (_selIdx >= 0) { e.preventDefault(); pickItem(_selIdx); }
+      else closeDropdown();
+    }
+  });
+
+  input.addEventListener('blur', () => {
+    // Delay so mousedown can fire first
+    setTimeout(closeDropdown, 160);
+  });
+}
+
+/* ── Attach autocomplete to all relevant inputs ── */
+function initAllAutocompletes() {
+  const FILE_INPUTS = [
+    { id: 'edit-file',  type: 'file' },
+    { id: 'fe-file',    type: 'file' },
+    { id: 'ig-file',    type: 'file' },
+    { id: 'ff-pattern', type: 'file' },
+    { id: 'idx-files',  type: 'file', multi: true },
+    { id: 'ov-files',   type: 'file', multi: true },
+  ];
+  const SYMBOL_INPUTS = [
+    { id: 'ss-name',    type: 'symbol' },
+    { id: 'cg-symbol',  type: 'symbol' },
+  ];
+  const DIR_INPUTS = [
+    { id: 'idx-dir',    type: 'dir' },
+    { id: 'ov-dir',     type: 'dir' },
+    { id: 'cg-dir',     type: 'dir' },
+  ];
+  const PKG_INPUTS = [
+    { id: 'idx-package', type: 'package' },
+    { id: 'ov-package',  type: 'package' },
+    { id: 'cg-package',  type: 'package' },
+  ];
+
+  [...FILE_INPUTS, ...SYMBOL_INPUTS, ...DIR_INPUTS, ...PKG_INPUTS].forEach(cfg => {
+    const el = document.getElementById(cfg.id);
+    if (!el) return;
+    attachAutocomplete(el, {
+      type: cfg.type,
+      multi: cfg.multi || false,
+      onSelect: (val, item) => {
+        // Extra side effects per input
+        if (cfg.id === 'edit-file') {
+          const ext = val.split('.').pop().toLowerCase();
+          setEditorLang(ext);
+        }
+        if (cfg.id === 'fe-file') {
+          const feLineStart = document.getElementById('fe-line-start');
+          const feLineEnd   = document.getElementById('fe-line-end');
+          if (feLineStart && !feLineStart.value) feLineStart.value = '1';
+          if (feLineEnd && !feLineEnd.value)   feLineEnd.value   = '100';
+        }
+      }
+    });
+  });
+
+  // Multi-value file input: idx-files (comma separated) — simple datalist-style
+  // (not attaching full AC since it's comma-separated, but could be extended)
+}
+
+// Also attach autocomplete for ig-module (module name — package style)
+function initModuleAutocomplete() {
+  const el = document.getElementById('ig-module');
+  if (!el) return;
+  attachAutocomplete(el, { type: 'package' });
+}
+
+// Close any open dropdown when clicking outside
+document.addEventListener('mousedown', e => {
+  if (_acActive && !_acActive.contains(e.target)) {
+    const wrap = _acActive.closest('.search-input-wrap');
+    if (!wrap || !wrap.contains(e.target)) _acActive.classList.remove('open');
+  }
+});
+
+/* ═══════════════════════════════════════════════════════════
    NAV / PAGE ROUTING
 ═══════════════════════════════════════════════════════════ */
 function navigateToPage(pageName) {
@@ -361,7 +708,7 @@ async function loadCallGraphSymbols() {
   if (!chipsContainer) return;
 
   try {
-    const data = await api('/search/index?');
+    const data = await api('/search/index?limit=250&q=.');
     const files = data.files || [];
     if (!files || files.length === 0) return;
 
@@ -1014,6 +1361,8 @@ const idxResults = document.getElementById('idx-results');
 
 document.getElementById('idx-load-btn').addEventListener('click', loadIndex);
 document.getElementById('idx-files').addEventListener('keydown', e => { if(e.key==='Enter') loadIndex(); });
+document.getElementById('idx-dir').addEventListener('keydown', e => { if(e.key==='Enter') loadIndex(); });
+document.getElementById('idx-package').addEventListener('keydown', e => { if(e.key==='Enter') loadIndex(); });
 
 async function loadIndex() {
   const filesInput = document.getElementById('idx-files').value.trim();
@@ -1149,6 +1498,8 @@ const ovResults = document.getElementById('ov-results');
 
 document.getElementById('ov-load-btn').addEventListener('click', loadOverview);
 document.getElementById('ov-files').addEventListener('keydown', e => { if(e.key==='Enter') loadOverview(); });
+document.getElementById('ov-dir').addEventListener('keydown', e => { if(e.key==='Enter') loadOverview(); });
+document.getElementById('ov-package').addEventListener('keydown', e => { if(e.key==='Enter') loadOverview(); });
 
 async function loadOverview() {
   const filesInput = document.getElementById('ov-files').value.trim();
@@ -1325,6 +1676,8 @@ const cgResults = document.getElementById('cg-results');
 document.getElementById('cg-callers-btn').addEventListener('click', () => loadCallGraph('callers'));
 document.getElementById('cg-callees-btn').addEventListener('click', () => loadCallGraph('callees'));
 document.getElementById('cg-symbol').addEventListener('keydown', e => { if(e.key==='Enter') loadCallGraph('callers'); });
+document.getElementById('cg-dir').addEventListener('keydown', e => { if(e.key==='Enter') loadCallGraph('callers'); });
+document.getElementById('cg-package').addEventListener('keydown', e => { if(e.key==='Enter') loadCallGraph('callers'); });
 
 async function loadCallGraph(type) {
   const symbol = document.getElementById('cg-symbol').value.trim();
@@ -1527,37 +1880,7 @@ const feResults = document.getElementById('fe-results');
 document.getElementById('fe-signature-btn').addEventListener('click', () => loadFunctionExtract('signature'));
 document.getElementById('fe-body-btn').addEventListener('click', () => loadFunctionExtract('body'));
 
-/* ── Auto-fill file path + default range on typing ── */
-{
-  let _feDebounce = null;
-  const feFile     = document.getElementById('fe-file');
-  const feLineStart = document.getElementById('fe-line-start');
-  const feLineEnd   = document.getElementById('fe-line-end');
 
-  feFile.addEventListener('input', () => {
-    clearTimeout(_feDebounce);
-    const val = feFile.value.trim();
-    if (!val || val.length < 2) return;
-
-    _feDebounce = setTimeout(async () => {
-      try {
-        const data = await api(`/search/file?${new URLSearchParams({ pattern: val, root: getRepo() })}`);
-        if (!data || data.length === 0) return;
-
-        // Pick best match: exact filename match first, then first result
-        const lower = val.toLowerCase();
-        const exact = data.find(f => f.toLowerCase().endsWith(lower));
-        const match = exact || data[0];
-
-        feFile.value = match;
-        if (!feLineStart.value) feLineStart.value = '1';
-        if (!feLineEnd.value)   feLineEnd.value   = '100';
-
-        toast(`Found: ${match}`, 'success');
-      } catch (_) {}
-    }, 400);
-  });
-}
 
 async function loadFunctionExtract(type) {
   const file = document.getElementById('fe-file').value.trim();
@@ -1905,3 +2228,21 @@ function appendFastapiLine(entry, cls) {
     fastapiPanel.style.height = '';
   });
 }
+
+/* ═══════════════════════════════════════════════════════════
+   INIT AUTOCOMPLETE
+   Called after all DOM + CodeMirror instances are ready
+═══════════════════════════════════════════════════════════ */
+// Use setTimeout to ensure CodeMirror & all IDs are mounted
+setTimeout(() => {
+  initAllAutocompletes();
+  initModuleAutocomplete();
+
+  // Docker mode: hide browse button, show hint
+  if (!window.pywebview) {
+    const browseBtn = document.getElementById('browse-btn');
+    browseBtn.style.display = 'none';
+    const repoPath = document.getElementById('repo-path');
+    repoPath.placeholder = 'e.g. /workspace/Downloads/dev-tool';
+  }
+}, 0);
