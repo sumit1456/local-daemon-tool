@@ -21,9 +21,14 @@ import logging
 
 # ── Ensure the local .venv is on sys.path ────────────────────────────────────
 _here = os.path.dirname(os.path.abspath(__file__))
-_venv_site = os.path.join(_here, ".venv", "Lib", "site-packages")
+_venv_scripts = "Scripts" if os.name == "nt" else "bin"
+_venv_site = os.path.join(_here, ".venv", "Lib" if os.name == "nt" else "lib", "site-packages")
 if os.path.isdir(_venv_site) and _venv_site not in sys.path:
     sys.path.insert(0, _venv_site)
+
+# ── Platform helpers ────────────────────────────────────────────────────────
+_IS_WINDOWS = os.name == "nt"
+_NO_WINDOW = subprocess.CREATE_NO_WINDOW if _IS_WINDOWS else 0
 
 # ── Setup Logging immediately ────────────────────────────────────────────────
 os.makedirs(os.path.join(_here, "logs"), exist_ok=True)
@@ -66,11 +71,11 @@ logger.info("Launcher started.")
 logger.info(f"Site packages path injected: {_venv_site}")
 
 # ── Verify .venv exists — auto-setup if missing ─────────────────────────────
-_venv_python = os.path.join(_here, ".venv", "Scripts", "python.exe")
+_venv_python = os.path.join(_here, ".venv", _venv_scripts, "python.exe" if _IS_WINDOWS else "python")
 if not os.path.isfile(_venv_python):
-    setup_bat = os.path.join(_here, "setup.bat")
-    if os.path.isfile(setup_bat):
-        logger.info(".venv not found, running setup.bat ...")
+    setup_script = os.path.join(_here, "setup.bat" if _IS_WINDOWS else "setup.sh")
+    if os.path.isfile(setup_script):
+        logger.info(".venv not found, running setup ...")
         try:
             import tkinter as tk
             from tkinter import messagebox
@@ -79,16 +84,19 @@ if not os.path.isfile(_venv_python):
             messagebox.showinfo(
                 "First-Time Setup",
                 "Virtual environment not found.\n\n"
-                "Running setup.bat to install dependencies.\n"
+                "Running setup to install dependencies.\n"
                 "This may take a few minutes..."
             )
             root.destroy()
         except Exception:
             pass
-        subprocess.run(["cmd", "/c", setup_bat], cwd=_here)
+        if _IS_WINDOWS:
+            subprocess.run(["cmd", "/c", setup_script], cwd=_here)
+        else:
+            subprocess.run(["bash", setup_script], cwd=_here)
         # Re-check after setup
         if not os.path.isfile(_venv_python):
-            logger.error("setup.bat completed but .venv still missing.")
+            logger.error("Setup completed but .venv still missing.")
             sys.exit(1)
         logger.info("Setup complete, continuing launch.")
     else:
@@ -100,7 +108,7 @@ if not os.path.isfile(_venv_python):
             messagebox.showerror(
                 "Virtual Environment Not Found",
                 f"No .venv found at:\n{_venv_python}\n\n"
-                "Run setup.bat first to install dependencies."
+                "Run setup.bat (Windows) or setup.sh (Linux/Mac) first."
             )
         except Exception:
             pass
@@ -399,11 +407,11 @@ def kill_stale_processes():
         sock.close()
         if result == 0:
             logger.info("Port %d is in use, killing stale process.", PORT)
-            if os.name == "nt":
+            if _IS_WINDOWS:
                 import re
                 out = subprocess.check_output(
                     ["netstat", "-ano", "-p", "tcp"],
-                    creationflags=subprocess.CREATE_NO_WINDOW,
+                    creationflags=_NO_WINDOW,
                 ).decode(errors="replace")
                 for line in out.splitlines():
                     if f":{PORT}" in line and "LISTENING" in line:
@@ -412,7 +420,7 @@ def kill_stale_processes():
                         logger.info("Killing stale server PID=%d", stale_pid)
                         subprocess.run(
                             ["taskkill", "/F", "/PID", str(stale_pid)],
-                            creationflags=subprocess.CREATE_NO_WINDOW,
+                            creationflags=_NO_WINDOW,
                             capture_output=True,
                         )
                         time.sleep(0.5)
@@ -423,13 +431,13 @@ def kill_stale_processes():
     except Exception as e:
         logger.warning("Could not check/kill stale server: %s", e)
 
-    # Kill any stale mcp_server.py processes running on the machine (Windows/Unix)
+    # Kill any stale mcp_server.py processes running on the machine
     try:
         logger.info("Killing any stale mcp_server.py processes.")
-        if os.name == "nt":
+        if _IS_WINDOWS:
             subprocess.run(
                 ["wmic", "process", "where", "CommandLine like '%mcp_server.py%'", "call", "terminate"],
-                creationflags=subprocess.CREATE_NO_WINDOW,
+                creationflags=_NO_WINDOW,
                 capture_output=True
             )
         else:
@@ -445,7 +453,7 @@ def start_daemon():
     os.chdir(_here)
     kill_stale_processes()
 
-    venv_python = os.path.join(_here, ".venv", "Scripts", "python.exe")
+    venv_python = os.path.join(_here, ".venv", _venv_scripts, "python.exe" if _IS_WINDOWS else "python")
     env = os.environ.copy()
     env["PYTHONPATH"] = _here
 
@@ -460,7 +468,7 @@ def start_daemon():
         ],
         cwd=_here,
         env=env,
-        creationflags=subprocess.CREATE_NO_WINDOW,
+        creationflags=_NO_WINDOW,
     )
 
     logger.info("Started FastAPI daemon pid=%s", server_process.pid)
@@ -472,9 +480,10 @@ def start_mcp_server():
 
     os.chdir(_here)
 
-    venv_python = os.path.join(_here, ".venv-mcp", "Scripts", "python.exe")
+    python_name = "python.exe" if _IS_WINDOWS else "python"
+    venv_python = os.path.join(_here, ".venv-mcp", _venv_scripts, python_name)
     if not os.path.isfile(venv_python):
-        venv_python = os.path.join(_here, ".venv", "Scripts", "python.exe")
+        venv_python = os.path.join(_here, ".venv", _venv_scripts, python_name)
 
     env = os.environ.copy()
     env["PYTHONPATH"] = _here
@@ -485,7 +494,7 @@ def start_mcp_server():
         [venv_python, mcp_script],
         cwd=_here,
         env=env,
-        creationflags=subprocess.CREATE_NO_WINDOW,
+        creationflags=_NO_WINDOW,
         stdin=subprocess.PIPE,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,

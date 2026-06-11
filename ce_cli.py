@@ -327,7 +327,7 @@ def _get(endpoint: str, **params) -> object:
         _die(f"API error {e.code}: {err}")
     except urllib.error.URLError as e:
         _die(f"Cannot reach the Code Search Engine at {BASE}.\n"
-             f"Start it first: .venv\\Scripts\\pythonw.exe launcher.pyw\n"
+             f"Start the launcher for your platform first.\n"
              f"Error: {e}")
 
 
@@ -345,7 +345,7 @@ def _post(path: str, body: dict) -> object:
         _die(f"API error {e.code}: {err}")
     except urllib.error.URLError as e:
         _die(f"Cannot reach the Code Search Engine at {BASE}.\n"
-             f"Start it first: .venv\\Scripts\\pythonw.exe launcher.pyw\n"
+             f"Start the launcher for your platform first.\n"
              f"Error: {e}")
 
 
@@ -368,7 +368,7 @@ def cmd_ping(_args) -> None:
         _out({"status": "ok", "url": BASE})
     except urllib.error.URLError:
         _out({"status": "offline",
-              "message": "Service not running. Start: .venv\\Scripts\\pythonw.exe launcher.pyw"})
+              "message": "Service not running. Start the launcher for your platform."})
 
 
 def cmd_search(args) -> None:

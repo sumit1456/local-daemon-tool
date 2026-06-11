@@ -6,10 +6,12 @@ Agents (Claude Desktop, Aider, etc.) connect to this server and can call tools
 directly without needing to run shell commands.
 
 The local daemon must be running at http://127.0.0.1:8000.
-Start it with: .venv\Scripts\pythonw.exe launcher.pyw
+Start it with: .venv/bin/python launcher.pyw  (Linux/Mac)
+                .venv\\Scripts\\pythonw.exe launcher.pyw  (Windows)
 
 Usage (how you configure your agent to use this):
-    Command: .venv\Scripts\python.exe mcp_server.py
+    Command: .venv/bin/python mcp_server.py  (Linux/Mac)
+             .venv\\Scripts\\python.exe mcp_server.py  (Windows)
     Transport: stdio
 """
 
@@ -85,7 +87,7 @@ async def ping() -> dict:
         log.error("[ping] Daemon offline: %s", e)
         return {
             "status": "offline",
-            "message": "Daemon not running. Start it with: .venv\\Scripts\\pythonw.exe launcher.pyw"
+            "message": "Daemon not running. Start the launcher for your platform."
         }
 
 

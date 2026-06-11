@@ -3,7 +3,7 @@
   "mcp": {
     "CodeSearchEngine": {
       "type": "local",
-      "command": [".venv-mcp\\Scripts\\python.exe", "mcp_server.py"],
+      "command": [".venv-mcp/Scripts/python.exe", "mcp_server.py"],
       "enabled": true
     }
   }
