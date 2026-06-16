@@ -15,38 +15,93 @@ Usage (how you configure your agent to use this):
     Transport: stdio
 """
 
-import asyncio
 import sys
-import logging
-import httpx
-from mcp.server.fastmcp import FastMCP
+import os
 from pathlib import Path
-from datetime import datetime
 
+# ── Logging and exception setup first ─────────────────────────────────────────
 LOG_DIR = Path(__file__).parent / "logs"
 LOG_DIR.mkdir(exist_ok=True)
 LOG_FILE = LOG_DIR / "mcp_server.log"
 
-logging.basicConfig(
-    level=logging.DEBUG,
-    format="%(asctime)s [%(levelname)s] %(message)s",
-    handlers=[
-        logging.FileHandler(LOG_FILE, encoding="utf-8"),
-        logging.StreamHandler(sys.stderr),
-    ],
-)
-log = logging.getLogger("mcp_server")
+try:
+    import logging
+    logging.basicConfig(
+        level=logging.DEBUG,
+        format="%(asctime)s [%(levelname)s] %(message)s",
+        handlers=[
+            logging.FileHandler(LOG_FILE, encoding="utf-8"),
+            logging.StreamHandler(sys.stderr),
+        ],
+    )
+    log = logging.getLogger("mcp_server")
+except Exception as e:
+    # Fallback raw file logging if basicConfig fails
+    try:
+        with open(LOG_FILE, "a", encoding="utf-8") as f:
+            from datetime import datetime
+            f.write(f"{datetime.now().isoformat()} [CRITICAL] Failed to configure logging: {e}\n")
+    except Exception:
+        pass
+    sys.exit(1)
+
+def handle_exception(exc_type, exc_value, exc_traceback):
+    if issubclass(exc_type, KeyboardInterrupt):
+        sys.__excepthook__(exc_type, exc_value, exc_traceback)
+        return
+    log.critical("Unhandled exception in main thread", exc_info=(exc_type, exc_value, exc_traceback))
+    for handler in logging.getLogger().handlers:
+        handler.flush()
+
+sys.excepthook = handle_exception
+
+# Catch thread exceptions (Python 3.8+)
+import threading
+def handle_thread_exception(args):
+    if issubclass(args.exc_type, KeyboardInterrupt):
+        return
+    log.critical("Unhandled exception in thread %s", args.thread.name, exc_info=(args.exc_type, args.exc_value, args.exc_traceback))
+    for handler in logging.getLogger().handlers:
+        handler.flush()
+threading.excepthook = handle_thread_exception
+
+try:
+    import asyncio
+    import httpx
+    from mcp.server.fastmcp import FastMCP
+    from datetime import datetime
+except Exception as e:
+    log.critical("Failed to import required libraries. Make sure the virtual environment '.venv-mcp' is active and dependencies are installed.", exc_info=True)
+    for handler in logging.getLogger().handlers:
+        handler.flush()
+    sys.exit(1)
 
 DAEMON_BASE = "http://127.0.0.1:8000"
 TIMEOUT = 30.0
+_REPO_PATH_CACHE: str | None = None
 
 log.info("=" * 60)
-log.info("MCP Server starting — PID %s", __import__("os").getpid())
+log.info("MCP Server starting — PID %s", os.getpid())
 log.info("Log file: %s", LOG_FILE)
 log.info("Daemon target: %s", DAEMON_BASE)
 log.info("=" * 60)
+for handler in logging.getLogger().handlers:
+    handler.flush()
 
 mcp = FastMCP("CodeSearchEngine")
+
+
+# ── Repo path helper ─────────────────────────────────────────────────────────
+
+async def _get_repo_path() -> str:
+    """Get the currently indexed repo path from the daemon, with local cache."""
+    global _REPO_PATH_CACHE
+    try:
+        data = await _get("/workspace")
+        _REPO_PATH_CACHE = data.get("path", ".")
+        return _REPO_PATH_CACHE
+    except Exception:
+        return _REPO_PATH_CACHE or "."
 
 
 # ── HTTP helpers ──────────────────────────────────────────────────────────────
@@ -72,6 +127,16 @@ async def _post(endpoint: str, body: dict) -> dict:
         return r.json()
 
 
+async def _delete(endpoint: str, params: dict | None = None) -> dict:
+    """Make a DELETE request to the local daemon."""
+    log.debug("DELETE %s %s", endpoint, params or {})
+    async with httpx.AsyncClient(base_url=DAEMON_BASE, timeout=TIMEOUT) as client:
+        r = await client.delete(endpoint, params=params or {})
+        log.debug("DELETE %s -> %s (%dms)", endpoint, r.status_code, r.elapsed.total_seconds() * 1000)
+        r.raise_for_status()
+        return r.json()
+
+
 # ── Tools ─────────────────────────────────────────────────────────────────────
 
 @mcp.tool()
@@ -92,6 +157,23 @@ async def ping() -> dict:
 
 
 @mcp.tool()
+async def reindex(repo_path: str) -> dict:
+    """
+    Switch the daemon to index a different repository.
+    Clears the previous index and rebuilds it for the new repo.
+
+    Args:
+        repo_path: Absolute path to the repository directory to index.
+    """
+    global _REPO_PATH_CACHE
+    log.info("[reindex] Switching to repo: %s", repo_path)
+    result = await _post("/reindex", {"repo_path": repo_path})
+    _REPO_PATH_CACHE = result.get("repo", repo_path)
+    log.info("[reindex] Done — indexed %d files", result.get("indexed", 0))
+    return result
+
+
+@mcp.tool()
 async def search_code(
     query: str,
     path: str = ".",
@@ -100,16 +182,18 @@ async def search_code(
 ) -> dict:
     """
     Search source code using ripgrep. Returns matching lines with file, line number, and snippet.
-    
+
     IMPORTANT: For broad queries, prefer the native grep_search tool — it is more token-efficient.
     Use this tool when you need ripgrep-specific filtering (language, path scoping, etc.).
-    
+
     Args:
         query: Search pattern or text to find.
-        path: Root directory to search in (default: project root).
+        path: Root directory to search in (default: currently indexed repo).
         lang: Language filter — python | javascript | typescript | java | go | rust.
         limit: Maximum number of results to return (default: 50).
     """
+    if path == ".":
+        path = await _get_repo_path()
     data = await _get("/search/code", q=query, path=path, lang=lang, limit=limit)
     return {
         "query": data["query"],
@@ -152,8 +236,10 @@ async def find_file(
 
     Args:
         pattern: Filename pattern to search for (e.g. "*.py", "PDFRenderer").
-        root: Root directory to search in (default: project root).
+        root: Root directory to search in (default: currently indexed repo).
     """
+    if root == ".":
+        root = await _get_repo_path()
     return await _get("/search/file", pattern=pattern, root=root)
 
 
@@ -557,6 +643,231 @@ async def get_edit_context(
         raise
 
 
+# ── Missing Daemon Endpoints ─────────────────────────────────────────────────
+
+@mcp.tool()
+async def search_usages(symbol_name: str, limit: int = 50) -> dict:
+    """
+    Find all places where a symbol is referenced (used) in the codebase.
+    Unlike get_callers which only shows direct callers, this shows all usages
+    including variable references, imports, type annotations, etc.
+
+    Args:
+        symbol_name: Symbol name to find usages for.
+        limit: Maximum number of results (default: 50).
+    """
+    return await _get("/search/usages", symbol_name=symbol_name, limit=limit)
+
+
+@mcp.tool()
+async def get_docstring(symbol_name: str, file: str | None = None) -> dict:
+    """
+    Retrieve docstrings for a symbol, optionally filtered by file.
+
+    Args:
+        symbol_name: Symbol name to get docstring for.
+        file: Optional file path filter to narrow results.
+    """
+    return await _get("/search/docstring", symbol_name=symbol_name, file=file)
+
+
+@mcp.tool()
+async def read_file(file: str) -> dict:
+    """
+    Read full content of a file relative to the indexed repo path.
+
+    Args:
+        file: Relative path to the file (e.g. "codeengine/app.py").
+    """
+    return await _get("/search/file-read", file=file)
+
+
+@mcp.tool()
+async def sandbox_status() -> dict:
+    """
+    Return Docker availability and detected stack for the current repo.
+    Useful to check if sandbox is ready before running check_syntax, compile_project, or run_tests.
+    """
+    return await _get("/sandbox/status")
+
+
+@mcp.tool()
+async def stop_sandbox(stack: str) -> dict:
+    """
+    Stop and remove a specific sandbox container.
+
+    Args:
+        stack: Stack to stop — python | node | java | go | rust.
+    """
+    return await _delete("/sandbox/stop", params={"stack": stack})
+
+
+@mcp.tool()
+async def list_workspace() -> dict:
+    """
+    List subdirectories inside /workspace that look like repos.
+    Useful for discovering available repositories to index.
+    """
+    return await _get("/workspace/list")
+
+
+# ── New Feature Tools ────────────────────────────────────────────────────────
+
+@mcp.tool()
+async def get_blast_radius(symbol_name: str) -> dict:
+    """
+    Get the PRECOMPUTED full blast radius for a symbol — every function that
+    transitively calls it, grouped by call depth. O(1) lookup (no live tracing).
+    Much faster and cheaper than impact_analysis for large codebases.
+
+    Args:
+        symbol_name: The function or method name to check.
+    """
+    log.info("[get_blast_radius] symbol=%s", symbol_name)
+    return await _get("/search/blast-radius", symbol=symbol_name)
+
+
+@mcp.tool()
+async def get_error_context(error_message: str, file: str, line: int) -> dict:
+    """
+    Given a compiler, linter, or runtime error, return a pre-packaged diagnostic
+    bundle in a single call. Includes:
+    - The exact offending line of code
+    - The enclosing function (what function contains the error)
+    - Type signatures of all symbols referenced in the error
+    - All imports of the erroring file
+    - Who calls the enclosing function (to understand the call chain)
+
+    Use this INSTEAD of manually calling get_type_info + get_imports + get_callers
+    separately. Saves 3-5 tool calls and ~1500 tokens.
+
+    Args:
+        error_message: The full compiler/linter error string.
+        file: Relative path to the file with the error (e.g. "codeengine/core/search.py").
+        line: The line number where the error occurred.
+    """
+    log.info("[get_error_context] file=%s line=%d", file, line)
+    return await _get("/search/error-context", error=error_message, file=file, line=line)
+
+
+@mcp.tool()
+async def get_function_history(symbol_name: str, limit: int = 20) -> dict:
+    """
+    Return the precomputed git commit history for a specific function or class.
+    Each entry is a compact record: commit hash, date, message, and change type
+    (signature_change | logic_edit | new | deleted).
+
+    Use this INSTEAD of running raw git log commands, which burn 10,000+ tokens.
+    This returns a 150-token summary of the function's full change history.
+
+    Args:
+        symbol_name: The exact function or class name.
+        limit: Maximum number of commits to return (default 20).
+    """
+    log.info("[get_function_history] symbol=%s limit=%d", symbol_name, limit)
+    return await _get("/search/function-history", symbol=symbol_name, limit=limit)
+
+
+@mcp.tool()
+async def index_git_history() -> dict:
+    """
+    Trigger indexing of the git commit history for the current repository.
+    Must be called once after /reindex before get_function_history works.
+    Processes the last 200 commits. Run in the background (takes ~5-30 seconds).
+    """
+    log.info("[index_git_history] Triggering git history indexing")
+    return await _post("/git-index", {})
+
+
+@mcp.tool()
+async def trace_endpoint_flow(entry_point: str, max_depth: int = 8) -> dict:
+    """
+    Trace the complete execution path from an entry point (API route handler,
+    CLI command, event listener) down through all function calls to leaf nodes.
+
+    Returns a compact call-chain tree showing: function name, file, line number,
+    depth in the chain, and what it calls next.
+
+    Use this INSTEAD of reading router → service → repository files one by one.
+    Saves 5-10 file reads (~5000-8000 tokens) and gives the complete picture
+    in a single call (~200-400 tokens).
+
+    Args:
+        entry_point: Function name or partial name of the entry point
+                     (e.g. "search_code_route", "handle_login", "main").
+        max_depth: How deep to trace the call chain (default 8).
+    """
+    log.info("[trace_endpoint_flow] entry=%s depth=%d", entry_point, max_depth)
+    return await _get("/search/endpoint-flow", entry=entry_point, max_depth=max_depth)
+
+
+@mcp.tool()
+async def setup_sandbox() -> dict:
+    """
+    Detect the project stack and start a Docker sandbox container.
+    Installs all project dependencies inside the container.
+    Must be called once before using check_syntax, compile_project, or run_tests.
+    Safe to call multiple times — idempotent.
+
+    Returns: stack detected, image used, container ID, deps_installed status.
+    """
+    log.info("[setup_sandbox] Starting sandbox...")
+    return await _post("/sandbox/setup", {})
+
+
+@mcp.tool()
+async def check_syntax(file: str) -> dict:
+    """
+    Lint a single file inside the Docker sandbox using the stack's native linter.
+    Returns structured errors only — never raw linter output.
+
+    Supported: Python (ruff), JavaScript/TypeScript (eslint/tsc),
+               Java (javac), Go (go vet), Rust (cargo check).
+
+    Fallback: If Docker is unavailable, uses Python's built-in ast.parse for .py files.
+
+    Use this INSTEAD of running linter commands in terminal and reading all output.
+    Saves 1000-3000 tokens of raw linter output per check.
+
+    Args:
+        file: Relative path to the file to lint (e.g. "src/main.py").
+    """
+    log.info("[check_syntax] file=%s", file)
+    return await _get("/sandbox/lint", file=file)
+
+
+@mcp.tool()
+async def compile_project() -> dict:
+    """
+    Compile the entire project inside the Docker sandbox.
+    Returns structured errors with file, line, column, and message.
+    Never returns raw build log output.
+
+    Token cost: ~100-300 tokens (vs 3000-8000 for reading raw build output).
+
+    Call setup_sandbox() first if not already done.
+    """
+    log.info("[compile_project] Compiling project...")
+    return await _post("/sandbox/compile", {})
+
+
+@mcp.tool()
+async def run_tests(test_path: str | None = None) -> dict:
+    """
+    Run the project's test suite inside the Docker sandbox.
+    Returns a structured summary: total, passed, failed, and failure details.
+    Never returns raw test runner output.
+
+    Token cost: ~150-400 tokens (vs 5000-15000 for reading raw pytest/jest output).
+
+    Args:
+        test_path: Optional relative path to a specific test file or directory.
+                   If None, runs all tests.
+    """
+    log.info("[run_tests] test_path=%s", test_path)
+    return await _post("/sandbox/test", {"path": test_path} if test_path else {})
+
+
 # ── Tools Documentation Endpoint ────────────────────────────────────────────
 
 TOOLS_DOCS = {
@@ -859,5 +1170,25 @@ async def find_similar_functions(symbol_name: str, file: str | None = None, limi
 
 if __name__ == "__main__":
     log.info("MCP Server ready, running stdio transport...")
-    mcp.run(transport="stdio")
+    for handler in logging.getLogger().handlers:
+        handler.flush()
+    try:
+        # Set asyncio event loop exception handler
+        loop = asyncio.get_event_loop()
+        def handle_async_exception(loop, context):
+            msg = context.get("exception", context.get("message"))
+            log.error("Unhandled exception in asyncio loop: %s", msg, exc_info=context.get("exception"))
+            for handler in logging.getLogger().handlers:
+                handler.flush()
+        loop.set_exception_handler(handle_async_exception)
+    except Exception as e:
+        log.warning("Could not set asyncio loop exception handler: %s", e)
+
+    try:
+        mcp.run(transport="stdio")
+    except Exception as e:
+        log.critical("MCP Server crashed during execution", exc_info=True)
+        for handler in logging.getLogger().handlers:
+            handler.flush()
+        sys.exit(1)
 

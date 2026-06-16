@@ -1661,3 +1661,300 @@ async def get_edit_context(
         callees=callees,
         imports=imports,
     )
+
+
+# ---------------------------------------------------------------------------
+# FEATURE 1 — Transitive Closure (Precomputed Blast Radius)
+# ---------------------------------------------------------------------------
+
+async def build_transitive_closure() -> int:
+    """
+    Compute and store the full transitive caller closure for all symbols.
+    Uses iterative BFS seeded from call_edges. Run after every reindex.
+    Returns the total number of (symbol_id, caller_id) pairs inserted.
+    """
+    async with get_db() as db:
+        await db.execute("DELETE FROM transitive_callers")
+
+        # Load all direct edges: {callee_id: [caller_id, ...]}
+        async with db.execute(
+            "SELECT caller_id, callee_id FROM call_edges WHERE callee_id IS NOT NULL"
+        ) as cur:
+            rows = await cur.fetchall()
+
+        direct: dict[int, list[int]] = {}
+        for row in rows:
+            direct.setdefault(row["callee_id"], []).append(row["caller_id"])
+
+        # BFS from every symbol outward
+        to_insert: list[tuple[int, int, int]] = []
+        all_symbols: set[int] = set(direct.keys()) | {c for v in direct.values() for c in v}
+
+        for start in all_symbols:
+            visited: dict[int, int] = {}   # caller_id -> depth
+            queue: list[tuple[int, int]] = [(start, 0)]
+            while queue:
+                node, depth = queue.pop(0)
+                for caller in direct.get(node, []):
+                    if caller not in visited:
+                        visited[caller] = depth + 1
+                        queue.append((caller, depth + 1))
+            for caller_id, depth in visited.items():
+                to_insert.append((start, caller_id, depth))
+
+        await db.executemany(
+            "INSERT OR REPLACE INTO transitive_callers (symbol_id, caller_id, depth) VALUES (?, ?, ?)",
+            to_insert
+        )
+        await db.commit()
+        return len(to_insert)
+
+
+async def get_blast_radius(symbol_name: str) -> dict:
+    """
+    Return precomputed blast radius for a symbol: all transitive callers
+    grouped by depth, with their file paths. O(1) DB lookup.
+    """
+    async with get_db() as db:
+        # Resolve symbol_id
+        async with db.execute(
+            "SELECT id FROM symbols WHERE name = ? LIMIT 1", (symbol_name,)
+        ) as cur:
+            row = await cur.fetchone()
+        if not row:
+            return {"symbol": symbol_name, "found": False, "callers": []}
+
+        symbol_id = row["id"]
+        async with db.execute(
+            """
+            SELECT s.name, f.path, tc.depth
+            FROM transitive_callers tc
+            JOIN symbols s ON tc.caller_id = s.id
+            JOIN files f ON s.file_id = f.id
+            WHERE tc.symbol_id = ?
+            ORDER BY tc.depth, f.path
+            """,
+            (symbol_id,)
+        ) as cur:
+            rows = await cur.fetchall()
+
+        callers_by_depth: dict[int, list[dict]] = {}
+        for r in rows:
+            callers_by_depth.setdefault(r["depth"], []).append(
+                {"name": r["name"], "file": r["path"]}
+            )
+
+        return {
+            "symbol": symbol_name,
+            "found": True,
+            "total_affected": len(rows),
+            "max_depth": max(callers_by_depth.keys(), default=0),
+            "callers_by_depth": {str(k): v for k, v in sorted(callers_by_depth.items())},
+        }
+
+
+# ---------------------------------------------------------------------------
+# FEATURE 2 — Error Diagnostic Bundle
+# ---------------------------------------------------------------------------
+
+async def get_error_context(error_message: str, file_path: str, line_number: int) -> dict:
+    """
+    Given a compiler/linter error, return a pre-packaged diagnostic bundle:
+    type signatures of all symbols on that line, the function containing the error,
+    its imports, and the callers of that function.
+    Replaces 4-6 separate tool calls.
+    """
+    import re as _re
+    from pathlib import Path as _Path
+
+    repo_root = _Path(os.getenv("REPO_PATH", ".")).resolve()
+    full_path = str((repo_root / file_path).resolve())
+
+    # 1. Read the offending line
+    offending_line = ""
+    try:
+        with open(full_path, "r", encoding="utf-8", errors="replace") as f:
+            lines = f.readlines()
+            if 0 < line_number <= len(lines):
+                offending_line = lines[line_number - 1].rstrip()
+    except Exception:
+        pass
+
+    # 2. Extract symbol tokens from the error message and offending line
+    combined = f"{error_message} {offending_line}"
+    symbol_tokens = set(_re.findall(r'\b([A-Za-z_][A-Za-z0-9_]{2,})\b', combined))
+    STOPWORDS = {"self", "None", "True", "False", "return", "def", "class",
+                 "import", "from", "async", "await", "for", "if", "else"}
+    symbol_tokens -= STOPWORDS
+
+    async with get_db() as db:
+        # 3. Find the enclosing function at the error line
+        async with db.execute(
+            """
+            SELECT s.id, s.name, s.kind, s.line_start, s.line_end, f.path
+            FROM symbols s
+            JOIN files f ON s.file_id = f.id
+            WHERE f.path = ? AND s.line_start <= ? AND s.line_end >= ?
+            ORDER BY (s.line_end - s.line_start) ASC
+            LIMIT 1
+            """,
+            (file_path, line_number, line_number)
+        ) as cur:
+            enclosing = await cur.fetchone()
+
+        enclosing_fn = None
+        if enclosing:
+            enclosing_fn = {
+                "name": enclosing["name"],
+                "kind": enclosing["kind"],
+                "line_start": enclosing["line_start"],
+                "line_end": enclosing["line_end"],
+            }
+
+        # 4. Look up type hints for matching symbols
+        type_info = []
+        for token in symbol_tokens:
+            async with db.execute(
+                """
+                SELECT s.name, th.param_name, th.annotation, th.is_return
+                FROM type_hints th
+                JOIN symbols s ON th.symbol_id = s.id
+                WHERE s.name = ?
+                LIMIT 5
+                """,
+                (token,)
+            ) as cur:
+                type_rows = await cur.fetchall()
+            for r in type_rows:
+                type_info.append({
+                    "symbol": r["name"],
+                    "param": r["param_name"],
+                    "type": r["annotation"],
+                    "is_return": bool(r["is_return"]),
+                })
+
+        # 5. Get imports for the erroring file
+        async with db.execute(
+            """
+            SELECT i.module FROM imports i
+            JOIN files f ON i.file_id = f.id
+            WHERE f.path = ?
+            """,
+            (file_path,)
+        ) as cur:
+            import_rows = await cur.fetchall()
+        imports = [r["module"] for r in import_rows]
+
+        # 6. Get direct callers of the enclosing function
+        callers = []
+        if enclosing:
+            async with db.execute(
+                """
+                SELECT s.name, f.path
+                FROM call_edges ce
+                JOIN symbols s ON ce.caller_id = s.id
+                JOIN files f ON s.file_id = f.id
+                WHERE ce.callee_id = ?
+                LIMIT 10
+                """,
+                (enclosing["id"],)
+            ) as cur:
+                caller_rows = await cur.fetchall()
+            callers = [{"name": r["name"], "file": r["path"]} for r in caller_rows]
+
+    return {
+        "error_message": error_message,
+        "file": file_path,
+        "line": line_number,
+        "offending_line": offending_line,
+        "enclosing_function": enclosing_fn,
+        "type_signatures": type_info,
+        "file_imports": imports,
+        "callers_of_enclosing": callers,
+    }
+
+
+# ---------------------------------------------------------------------------
+# FEATURE 4 — Execution Flow Traces (Endpoint-to-DB Path)
+# ---------------------------------------------------------------------------
+
+async def trace_endpoint_flow(entry_point: str, max_depth: int = 8) -> dict:
+    """
+    Trace the full execution flow from an entry point symbol (e.g. a FastAPI
+    route handler or CLI command) down through all calls to leaf functions.
+    Returns a compact call-chain tree — no file reading required.
+    """
+    async with get_db() as db:
+        # Find the entry point symbol
+        async with db.execute(
+            "SELECT id, name, kind FROM symbols WHERE name LIKE ? LIMIT 5",
+            (f"%{entry_point}%",)
+        ) as cur:
+            candidates = await cur.fetchall()
+
+        if not candidates:
+            return {"entry_point": entry_point, "found": False, "chain": []}
+
+        # Take first match; build call chain via BFS using call_edges
+        root = candidates[0]
+        visited: dict[int, dict] = {}
+        queue: list[tuple[int, int]] = [(root["id"], 0)]  # (symbol_id, depth)
+
+        while queue:
+            sym_id, depth = queue.pop(0)
+            if depth >= max_depth or sym_id in visited:
+                continue
+
+            async with db.execute(
+                """
+                SELECT s.id, s.name, s.kind, f.path, ce.callee_name
+                FROM call_edges ce
+                JOIN symbols s ON ce.caller_id = s.id
+                JOIN files f ON s.file_id = f.id
+                WHERE ce.caller_id = ?
+                """,
+                (sym_id,)
+            ) as cur:
+                edges = await cur.fetchall()
+
+            # Get this symbol's own info
+            async with db.execute(
+                """
+                SELECT s.name, s.kind, s.line_start, f.path
+                FROM symbols s JOIN files f ON s.file_id = f.id
+                WHERE s.id = ?
+                """,
+                (sym_id,)
+            ) as cur:
+                sym_row = await cur.fetchone()
+
+            if sym_row:
+                visited[sym_id] = {
+                    "id": sym_id,
+                    "name": sym_row["name"],
+                    "kind": sym_row["kind"],
+                    "file": sym_row["path"],
+                    "line": sym_row["line_start"],
+                    "depth": depth,
+                    "calls": [e["callee_name"] for e in edges],
+                }
+
+            for edge in edges:
+                # Resolve callee to a symbol ID if possible
+                async with db.execute(
+                    "SELECT id FROM symbols WHERE name = ? LIMIT 1",
+                    (edge["callee_name"],)
+                ) as cur:
+                    callee_row = await cur.fetchone()
+                if callee_row and callee_row["id"] not in visited:
+                    queue.append((callee_row["id"], depth + 1))
+
+    # Format as ordered chain from root to leaves
+    chain = sorted(visited.values(), key=lambda x: x["depth"])
+    return {
+        "entry_point": entry_point,
+        "found": True,
+        "max_depth_reached": max(v["depth"] for v in visited.values()) if visited else 0,
+        "total_nodes": len(chain),
+        "chain": chain,
+    }

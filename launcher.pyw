@@ -451,8 +451,14 @@ def kill_stale_processes():
     try:
         logger.info("Killing any stale mcp_server.py processes.")
         if _IS_WINDOWS:
+            # Use PowerShell instead of deprecated wmic
+            ps_cmd = (
+                "Get-CimInstance Win32_Process | "
+                "Where-Object { $_.CommandLine -like '*mcp_server.py*' -and $_.ProcessId -ne $PID } | "
+                "ForEach-Object { Stop-Process -Id $_.ProcessId -Force }"
+            )
             subprocess.run(
-                ["wmic", "process", "where", "CommandLine like '%mcp_server.py%'", "call", "terminate"],
+                ["powershell", "-NoProfile", "-Command", ps_cmd],
                 creationflags=_NO_WINDOW,
                 capture_output=True
             )
@@ -503,6 +509,7 @@ def start_mcp_server():
 
     env = os.environ.copy()
     env["PYTHONPATH"] = _here
+    env["PYTHONUNBUFFERED"] = "1"
 
     mcp_script = os.path.join(_here, "mcp_server.py")
 
@@ -512,8 +519,8 @@ def start_mcp_server():
         env=env,
         creationflags=_NO_WINDOW,
         stdin=subprocess.PIPE,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
     )
 
     logger.info("Started MCP server pid=%s", mcp_process.pid)

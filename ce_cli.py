@@ -272,36 +272,22 @@ This CLI bridges the gap: agents call it via run_command/PowerShell,
 and it talks to the local server on their behalf.
 
 Usage (from the local-daemon-tool directory):
-    .venv\Scripts\python.exe ce_cli.py ping
     .venv\Scripts\python.exe ce_cli.py search "pattern" [--path .] [--lang python] [--limit 50]
     .venv\Scripts\python.exe ce_cli.py symbol "name"   [--kind function|class|method|interface]
     .venv\Scripts\python.exe ce_cli.py file   "pattern" [--root .]
     .venv\Scripts\python.exe ce_cli.py function "rel/path/to/file.py" "FunctionName"
     .venv\Scripts\python.exe ce_cli.py class    "rel/path/to/file.py" "ClassName"
-    .venv\Scripts\python.exe ce_cli.py index    [--files foo.py bar.py] [--dir src] [--package codeengine.core]
-    .venv\Scripts\python.exe ce_cli.py overview [--files foo.py bar.py] [--dir src] [--package codeengine.core]
+    .venv\Scripts\python.exe ce_cli.py index    [--files foo.py bar.py]
+    .venv\Scripts\python.exe ce_cli.py overview [--files foo.py bar.py]
     .venv\Scripts\python.exe ce_cli.py callers  "symbol_name"
     .venv\Scripts\python.exe ce_cli.py callees  "symbol_name"
     .venv\Scripts\python.exe ce_cli.py signature "rel/path/to/file.py" 42 89
     .venv\Scripts\python.exe ce_cli.py body      "rel/path/to/file.py" 42 89
-    .venv\Scripts\python.exe ce_cli.py detect    "def foo(): pass" [--file_hint x.py] [--lang_hint python]
+    .venv\Scripts\python.exe ce_cli.py detect    "def foo(): pass"
     .venv\Scripts\python.exe ce_cli.py preview-smart "rel/path/to/file.py" "new_code"
     .venv\Scripts\python.exe ce_cli.py apply-smart "edit_id"
-    .venv\Scripts\python.exe ce_cli.py parse-blocks "def foo(): pass" [--file_hint x.py] [--lang_hint python]
-    .venv\Scripts\python.exe ce_cli.py edit-context "symbol_name" [--file x.py] [--dir src] [--package codeengine.core]
-    .venv\Scripts\python.exe ce_cli.py imports "rel/path/to/file.py"
-    .venv\Scripts\python.exe ce_cli.py importers "module.name"
-    .venv\Scripts\python.exe ce_cli.py file-deps "rel/path/to/file.py"
-    .venv\Scripts\python.exe ce_cli.py type-info "symbol_name" [--file x.py]
-    .venv\Scripts\python.exe ce_cli.py defined-symbols "rel/path/to/file.py"
-    .venv\Scripts\python.exe ce_cli.py count-refs "symbol_name"
-    .venv\Scripts\python.exe ce_cli.py impact "symbol_name"
-    .venv\Scripts\python.exe ce_cli.py trace "symbol_name" [--depth 5]
-    .venv\Scripts\python.exe ce_cli.py embedding-status
-    .venv\Scripts\python.exe ce_cli.py toggle-embeddings true|false
-    .venv\Scripts\python.exe ce_cli.py semantic-search "natural language query" [--limit 10]
-    .venv\Scripts\python.exe ce_cli.py find-similar "symbol_name" [--file x.py] [--limit 5]
-    .venv\Scripts\python.exe ce_cli.py tools-docs
+    .venv\Scripts\python.exe ce_cli.py parse-blocks "def foo(): pass"
+    .venv\Scripts\python.exe ce_cli.py ping
 """
 
 import sys
@@ -325,14 +311,9 @@ def _get(endpoint: str, **params) -> object:
     try:
         with urllib.request.urlopen(BASE + url, timeout=15) as r:
             return json.loads(r.read())
-    except urllib.error.HTTPError as e:
-        if e.code == 300:
-            return json.loads(e.read())
-        err = json.loads(e.read()).get("detail", e.reason)
-        _die(f"API error {e.code}: {err}")
     except urllib.error.URLError as e:
         _die(f"Cannot reach the Code Search Engine at {BASE}.\n"
-             f"Start the launcher for your platform first.\n"
+             f"Start it first: .venv\\Scripts\\pythonw.exe launcher.pyw\n"
              f"Error: {e}")
 
 
@@ -350,7 +331,7 @@ def _post(path: str, body: dict) -> object:
         _die(f"API error {e.code}: {err}")
     except urllib.error.URLError as e:
         _die(f"Cannot reach the Code Search Engine at {BASE}.\n"
-             f"Start the launcher for your platform first.\n"
+             f"Start it first: .venv\\Scripts\\pythonw.exe launcher.pyw\n"
              f"Error: {e}")
 
 
@@ -373,7 +354,7 @@ def cmd_ping(_args) -> None:
         _out({"status": "ok", "url": BASE})
     except urllib.error.URLError:
         _out({"status": "offline",
-              "message": "Service not running. Start the launcher for your platform."})
+              "message": "Service not running. Start: .venv\\Scripts\\pythonw.exe launcher.pyw"})
 
 
 def cmd_search(args) -> None:
@@ -449,10 +430,7 @@ def cmd_index(args) -> None:
     data = _get("/search/index",
                 files=args.files if args.files else None,
                 dir=args.dir,
-                package=args.package,
-                q=args.q,
-                limit=args.limit,
-                offset=args.offset)
+                package=args.package)
     _out(data)
 
 
@@ -461,10 +439,7 @@ def cmd_overview(args) -> None:
     data = _get("/search/overview",
                 files=args.files if args.files else None,
                 dir=args.dir,
-                package=args.package,
-                q=args.q,
-                limit=args.limit,
-                offset=args.offset)
+                package=args.package)
     _out(data)
 
 
@@ -539,97 +514,6 @@ def cmd_parse_blocks(args) -> None:
     _out(data)
 
 
-def cmd_edit_context(args) -> None:
-    """Get all structured context required to edit a symbol."""
-    params = {"symbol": args.symbol}
-    if args.file:
-        params["file"] = args.file
-    if args.dir:
-        params["dir"] = args.dir
-    if args.package:
-        params["package"] = args.package
-    data = _get("/search/edit-context", **params)
-    _out(data)
-
-
-def cmd_imports(args) -> None:
-    """Get all imports used by a file."""
-    data = _get("/search/imports", file=args.file)
-    _out(data)
-
-
-def cmd_importers(args) -> None:
-    """Get all files that import a given module (reverse dependency)."""
-    data = _get("/search/importers", module=args.module)
-    _out(data)
-
-
-def cmd_file_deps(args) -> None:
-    """Get complete dependency picture for a file (both directions)."""
-    data = _get("/search/file-deps", file=args.file)
-    _out(data)
-
-
-def cmd_type_info(args) -> None:
-    """Get parameter types and return type for a symbol."""
-    data = _get("/search/type-info", symbol_name=args.symbol_name, file=args.file)
-    _out(data)
-
-
-def cmd_defined_symbols(args) -> None:
-    """Get all symbols defined in a file."""
-    data = _get("/search/defined-symbols", file=args.file)
-    _out(data)
-
-
-def cmd_count_refs(args) -> None:
-    """Count how many times a symbol is referenced."""
-    data = _get("/search/count-references", symbol_name=args.symbol_name)
-    _out(data)
-
-
-def cmd_impact(args) -> None:
-    """Full impact assessment — callers, references, affected files."""
-    data = _get("/search/impact-analysis", symbol_name=args.symbol_name)
-    _out(data)
-
-
-def cmd_trace(args) -> None:
-    """Trace execution flow through the application."""
-    data = _get("/search/trace-execution", symbol_name=args.symbol_name, max_depth=args.max_depth)
-    _out(data)
-
-
-def cmd_embedding_status(_args) -> None:
-    """Check if embeddings are enabled, progress, and model info."""
-    data = _get("/search/embedding-status")
-    _out(data)
-
-
-def cmd_toggle_embeddings(args) -> None:
-    """Enable or disable embedding generation."""
-    data = _post("/search/embedding-toggle", {"enabled": args.enabled})
-    _out(data)
-
-
-def cmd_semantic_search(args) -> None:
-    """Find code by natural language meaning using embeddings."""
-    data = _get("/search/semantic", q=args.query, limit=args.limit)
-    _out(data)
-
-
-def cmd_find_similar(args) -> None:
-    """Find functions with similar behavior by embedding distance."""
-    data = _get("/search/similar", symbol=args.symbol, file=args.file, limit=args.limit)
-    _out(data)
-
-
-def cmd_tools_docs(_args) -> None:
-    """Get full documentation for all MCP tools."""
-    data = _get("/tools")
-    _out(data)
-
-
 # ── Argument parser ───────────────────────────────────────────────────────────
 
 def build_parser() -> argparse.ArgumentParser:
@@ -655,10 +539,6 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("name",               help="Symbol name (partial match)")
     s.add_argument("--kind", default=None,
                    help="Kind filter: function|class|method|interface")
-    s.add_argument("--dir", default=None,
-                   help="Directory prefix filter (e.g. src/core)")
-    s.add_argument("--package", default=None,
-                   help="Package path filter (e.g. codeengine.core)")
 
     # file
     s = sub.add_parser("file", help="Find files by name pattern (fd)")
@@ -693,48 +573,20 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--files", nargs="*", default=None,
                    metavar="FILE",
                    help="Scope to specific files (omit for full repo)")
-    s.add_argument("--dir", default=None,
-                   help="Directory prefix filter (e.g. src/core)")
-    s.add_argument("--package", default=None,
-                   help="Package path filter (e.g. codeengine.core)")
-    s.add_argument("--q", default=None,
-                   help="Substring match on file path")
-    s.add_argument("--limit", type=int, default=50,
-                   help="Max files to return (default: 50)")
-    s.add_argument("--offset", type=int, default=0,
-                   help="Number of files to skip (default: 0)")
 
     # overview
     s = sub.add_parser("overview", help="Full repo overview: symbols + call graph")
     s.add_argument("--files", nargs="*", default=None,
                    metavar="FILE",
                    help="Scope to specific files (omit for full repo)")
-    s.add_argument("--dir", default=None,
-                   help="Directory prefix filter (e.g. src/core)")
-    s.add_argument("--package", default=None,
-                   help="Package path filter (e.g. codeengine.core)")
-    s.add_argument("--q", default=None,
-                   help="Substring match on file path")
-    s.add_argument("--limit", type=int, default=50,
-                   help="Max files to return (default: 50)")
-    s.add_argument("--offset", type=int, default=0,
-                   help="Number of files to skip (default: 0)")
 
     # callers
     s = sub.add_parser("callers", help="Who calls a given symbol?")
     s.add_argument("symbol_name", help="Exact symbol name")
-    s.add_argument("--dir", default=None,
-                   help="Directory prefix filter (e.g. src/core)")
-    s.add_argument("--package", default=None,
-                   help="Package path filter (e.g. codeengine.core)")
 
     # callees
     s = sub.add_parser("callees", help="What does a symbol call internally?")
     s.add_argument("symbol_name", help="Exact symbol name")
-    s.add_argument("--dir", default=None,
-                   help="Directory prefix filter (e.g. src/core)")
-    s.add_argument("--package", default=None,
-                   help="Package path filter (e.g. codeengine.core)")
 
     # signature
     s = sub.add_parser("signature", help="Get function signature + docstring only")
@@ -769,108 +621,31 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--file_hint", default=None, help="Optional file path hint")
     s.add_argument("--lang_hint", default=None, help="Optional language hint")
 
-    # edit-context
-    s = sub.add_parser("edit-context", help="Get all context needed to edit a symbol")
-    s.add_argument("symbol", help="Symbol name to get context for")
-    s.add_argument("--file", default=None, help="Optional file path filter")
-    s.add_argument("--dir", default=None, help="Optional directory prefix filter")
-    s.add_argument("--package", default=None, help="Optional package path filter")
-
-    # imports
-    s = sub.add_parser("imports", help="Get all imports used by a file")
-    s.add_argument("file", help="Relative file path")
-
-    # importers
-    s = sub.add_parser("importers", help="Get all files that import a module (reverse dependency)")
-    s.add_argument("module", help="Module name (e.g. utils.auth)")
-
-    # file-deps
-    s = sub.add_parser("file-deps", help="Get full dependency picture for a file")
-    s.add_argument("file", help="Relative file path")
-
-    # type-info
-    s = sub.add_parser("type-info", help="Get parameter types and return type for a symbol")
-    s.add_argument("symbol_name", help="Symbol name")
-    s.add_argument("--file", default=None, help="Optional file path filter")
-
-    # defined-symbols
-    s = sub.add_parser("defined-symbols", help="Get all symbols defined in a file")
-    s.add_argument("file", help="Relative file path")
-
-    # count-refs
-    s = sub.add_parser("count-refs", help="Count how many times a symbol is referenced")
-    s.add_argument("symbol_name", help="Symbol name")
-
-    # impact
-    s = sub.add_parser("impact", help="Full impact assessment for a symbol")
-    s.add_argument("symbol_name", help="Symbol name")
-
-    # trace
-    s = sub.add_parser("trace", help="Trace execution flow through the application")
-    s.add_argument("symbol_name", help="Symbol name")
-    s.add_argument("--depth", type=int, default=5, help="Max call chain depth (default: 5)")
-
-    # embedding-status
-    sub.add_parser("embedding-status", help="Check embedding status (enabled, progress, model)")
-
-    # toggle-embeddings
-    s = sub.add_parser("toggle-embeddings", help="Enable or disable embedding generation")
-    s.add_argument("enabled", type=lambda x: x.lower() == "true", nargs="?", default=True,
-                   help="true or false (default: true)")
-
-    # semantic-search
-    s = sub.add_parser("semantic-search", help="Find code by natural language meaning")
-    s.add_argument("query", help="Natural language query")
-    s.add_argument("--limit", type=int, default=10, help="Max results (default: 10)")
-
-    # find-similar
-    s = sub.add_parser("find-similar", help="Find functions with similar behavior")
-    s.add_argument("symbol", help="Symbol name to find similar ones for")
-    s.add_argument("--file", default=None, help="Optional file path filter")
-    s.add_argument("--limit", type=int, default=5, help="Max results (default: 5)")
-
-    # tools-docs
-    sub.add_parser("tools-docs", help="Get full documentation for all MCP tools")
-
     return p
 
 
 # ── Entry point ───────────────────────────────────────────────────────────────
 
 HANDLERS = {
-    "ping":             cmd_ping,
-    "search":           cmd_search,
-    "symbol":           cmd_symbol,
-    "file":             cmd_file,
-    "function":         cmd_function,
-    "class":            cmd_class,
-    "preview":          cmd_preview,
-    "apply":            cmd_apply,
-    "undo":             cmd_undo,
-    "index":            cmd_index,
-    "overview":         cmd_overview,
-    "callers":          cmd_callers,
-    "callees":          cmd_callees,
-    "signature":        cmd_signature,
-    "body":             cmd_body,
-    "detect":           cmd_detect,
-    "preview-smart":    cmd_preview_smart,
-    "apply-smart":      cmd_apply_smart,
-    "parse-blocks":     cmd_parse_blocks,
-    "edit-context":     cmd_edit_context,
-    "imports":          cmd_imports,
-    "importers":        cmd_importers,
-    "file-deps":        cmd_file_deps,
-    "type-info":        cmd_type_info,
-    "defined-symbols":  cmd_defined_symbols,
-    "count-refs":       cmd_count_refs,
-    "impact":           cmd_impact,
-    "trace":            cmd_trace,
-    "embedding-status": cmd_embedding_status,
-    "toggle-embeddings": cmd_toggle_embeddings,
-    "semantic-search":  cmd_semantic_search,
-    "find-similar":     cmd_find_similar,
-    "tools-docs":       cmd_tools_docs,
+    "ping":      cmd_ping,
+    "search":    cmd_search,
+    "symbol":    cmd_symbol,
+    "file":      cmd_file,
+    "function":  cmd_function,
+    "class":     cmd_class,
+    "preview":   cmd_preview,
+    "apply":     cmd_apply,
+    "undo":      cmd_undo,
+    "index":     cmd_index,
+    "overview":  cmd_overview,
+    "callers":   cmd_callers,
+    "callees":   cmd_callees,
+    "signature": cmd_signature,
+    "body":      cmd_body,
+    "detect":        cmd_detect,
+    "preview-smart": cmd_preview_smart,
+    "apply-smart":   cmd_apply_smart,
+    "parse-blocks":  cmd_parse_blocks,
 }
 
 if __name__ == "__main__":

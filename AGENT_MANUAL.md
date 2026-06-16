@@ -2,11 +2,10 @@
 
 > **Audience**: AI agents (Claude, GPT, Gemini, etc.) operating in a
 > local coding environment on Windows.
-
-> **CRITICAL: Native vs MCP — Use the Right Tool**:
-> * **Native tools are FASTER and CHEAPER** for: keyword search (`grep`), file finding (`glob`), reading files (`read`).
-> * **MCP tools are REQUIRED** for: AST extraction, call graph, dependency tracing, semantic search, safe editing.
-> * **Rule of thumb**: If native can do it, use native. Only use MCP when you need AST-level precision or editing capabilities.
+>
+> **CRITICAL PERFORMANCE RULE (Token Budget)**:
+> * **DO NOT** use `search_code` for broad queries (e.g. "bbox", "config"). It returns raw JSON which consumes 10x-15x more tokens than native `grep_search`.
+> * **DO** use MCP tools for targeted AST extraction (`extract_function`, `extract_class`) and safe editing (`preview_edit`/`apply_edit`/`undo_edit`).
 >
 > **`get_index` AND `get_overview` — SAFE WITHOUT FILTERS**:
 > * Calling `get_index()` or `get_overview()` **without filters** returns a **compact summary** (~200 tokens): total files, symbols, languages, top dirs, top files.
@@ -42,33 +41,21 @@ Add to your MCP client config (e.g. `claude_desktop_config.json`):
 }
 ```
 
-### Option C: Get All Tool Docs via API
-
-```bash
-curl http://127.0.0.1:8000/tools
-```
-Returns full documentation for all MCP tools, including token costs, tradeoffs, and recommended workflows.
-
 ---
 
 ## 2. Tool Selection Strategy
 
-### Native vs MCP — Decision Table
-
-| Task | Use | Token Cost | Why? |
-|:-----|:----|:-----------|:-----|
-| **Search for a keyword** | Native `grep_search` | ~200 tokens | Compact, no JSON overhead |
-| **Find files by pattern** | Native `glob` | ~50 tokens | Fast, built-in |
-| **Read a full file** | Native `read` | Direct | No HTTP overhead |
-| **Read one function** | MCP `extract_function` | ~50-150 tokens | Only the function body |
-| **Read one class** | MCP `extract_class` | ~100-300 tokens | Only the class block |
-| **Quick function overview** | MCP `get_signature` | ~30-50 tokens | Signature + docstring only |
-| **Find by meaning (semantic)** | MCP `semantic_search` | ~200-500 tokens | Natural language query |
-| **Find similar functions** | MCP `find_similar_functions` | ~150-300 tokens | By embedding distance |
-| **File dependencies** | MCP `get_file_deps` | ~100-150 tokens | Both directions at once |
-| **Impact before change** | MCP `impact_analysis` | ~200-400 tokens | Full blast radius |
-| **Propose / Apply edits** | MCP `preview_edit`/`apply_edit` | ~200-500 tokens | Auto git commit, safe diffs |
-| **Get context to edit** | MCP `get_edit_context` | ~150-300 tokens | Source, callers, callees, imports |
+| Task | Best Tool | Token Cost | Why? |
+|:-----|:----------|:-----------|:-----|
+| **Broad Keyword Search** | Native `grep_search` | ~200 tokens | Compact summary, no JSON overhead |
+| **List Files by Pattern** | Native `glob` | ~50 tokens | Fast, built-in |
+| **Read a Specific Function** | MCP `extract_function` | ~50-150 tokens | AST extraction, only the function body |
+| **Read a Specific Class** | MCP `extract_class` | ~100-300 tokens | Only the class block |
+| **Quick Function Overview** | MCP `get_signature` | ~30-50 tokens | Signature + docstring only |
+| **File Dependencies** | MCP `get_file_deps` | ~100-150 tokens | Both directions at once |
+| **Impact Before Change** | MCP `impact_analysis` | ~200-400 tokens | Full blast radius |
+| **Propose / Apply Edits** | MCP `preview_edit`/`apply_edit` | ~200-500 tokens | Auto git commit, safe diffs |
+| **Get Context to Edit a Symbol** | MCP `get_edit_context` | ~150-300 tokens | Get exact source, callers, callees, and imports of target symbol |
 
 ---
 
@@ -78,24 +65,13 @@ Returns full documentation for all MCP tools, including token costs, tradeoffs, 
 | Tool | Description | Token Cost |
 |:-----|:------------|:-----------|
 | `ping` | Check if daemon is online | ~20 |
-| `get_tools_docs` | Full documentation for all tools | ~500 (cached) |
 
 ### Code Search
 | Tool | Description | Token Cost |
 |:-----|:------------|:-----------|
-| `search_code(query, path?, lang?, limit?)` | Ripgrep search. Use sparingly — native grep is faster. | ~500+ |
+| `search_code(query, path?, lang?, limit?)` | Ripgrep search. Use sparingly. | ~500+ |
 | `search_symbol(name, kind?)` | Find function/class definitions by name | ~100-300 |
-| `find_file(pattern, root?)` | Find files by name pattern — native glob is faster | ~50-100 |
-
-### Semantic Search (Embeddings)
-| Tool | Description | Token Cost |
-|:-----|:------------|:-----------|
-| `embedding_status()` | Check if embeddings are enabled, progress, model info | ~50 |
-| `toggle_embeddings(enabled)` | Enable or disable embedding generation | ~20 |
-| `semantic_search(query, limit?)` | Find code by natural language meaning | ~200-500 |
-| `find_similar_functions(symbol_name, file?, limit?)` | Find functions with similar behavior | ~150-300 |
-
-> **Note**: Semantic search requires embeddings to be enabled (toggle ON in UI or via `toggle_embeddings(true)`). First use downloads the model (~67MB). Embeddings auto-start after indexing if toggle is ON.
+| `find_file(pattern, root?)` | Find files by name pattern | ~50-100 |
 
 ### AST Extraction (Preferred for reading code)
 | Tool | Description | Token Cost |
@@ -192,73 +168,37 @@ Returns full documentation for all MCP tools, including token costs, tradeoffs, 
 3. Construct replacement code.
 4. Preview using `preview_edit` or write edits as needed.
 
-### Workflow G: Semantic search for code by meaning
-1. Ensure embeddings are enabled: `toggle_embeddings(true)` or UI toggle ON.
-2. Index a repo (embeddings auto-start after indexing).
-3. Search by meaning: `semantic_search("handle user authentication")`.
-4. Click result to view code in code panel.
+---
 
-### Workflow H: Find similar functions
-1. Find a function: `search_symbol(name="search_code")`.
-2. Find similar: `find_similar_functions("search_code")`.
-3. Extract to compare: `extract_function(file, name)`.
+## 5. Native Tools (Use When MCP Is Slower)
+
+> **WARNING**: These MCP tools are **slower and more token-heavy** than your platform's native equivalents. Use native tools first for broad searches — only fall back to MCP when you need AST-level precision or editing capabilities.
+
+### When to Use Native Tools (NOT MCP)
+| Task | Use Native Tool | Why Native Is Better |
+|:-----|:----------------|:---------------------|
+| **Search for a keyword** | `grep_search` | ~200 tokens vs ~500+ for `search_code` |
+| **Find files by pattern** | `glob` | ~50 tokens vs ~100 for `find_file` |
+| **Read a full file** | `read` (native) | Direct, no HTTP overhead |
+
+### When to Use MCP Instead
+| Task | Use MCP Tool | Why MCP Is Better |
+|:-----|:-------------|:-------------------|
+| **Read one function** | `extract_function` | ~50 tokens vs ~2000+ for full file read |
+| **Read one class** | `extract_class` | Only the class block, not the whole file |
+| **Check dependencies** | `get_file_deps` | Both directions in one call |
+| **Impact before change** | `impact_analysis` | Full blast radius in one call |
+| **Apply safe edits** | `preview_edit` + `apply_edit` | Auto git commit, undo support |
+
+### MCP Search Tools (Use Sparingly)
+| Tool | Token Cost | When to Use |
+|:-----|:-----------|:------------|
+| `search_code` | ~500+ | When you need language filtering or context lines |
+| `search_symbol` | ~100-300 | When you need AST-precise symbol lookup |
+| `find_file` | ~50-100 | When you need recursive file search |
+
+> **Rule of thumb**: If native `grep_search` can do it, use native. Only use MCP search tools when you need something native can't do (AST extraction, dependency analysis, safe editing).
 
 ---
 
-## 5. Native vs MCP — Detailed Guide
-
-### ALWAYS Use Native Tools For
-| Task | Native Tool | Token Cost | MCP Equivalent (Slower) |
-|:-----|:------------|:-----------|:------------------------|
-| **Keyword search** | `grep_search` | ~200 tokens | `search_code` (~500+) |
-| **Find files** | `glob` | ~50 tokens | `find_file` (~50-100) |
-| **Read a file** | `read` | Direct | N/A |
-| **List directory** | `ls` / `read` dir | Direct | N/A |
-
-### ALWAYS Use MCP Tools For
-| Task | MCP Tool | Why Native Can't Do It |
-|:-----|:---------|:----------------------|
-| **Extract one function** | `extract_function` | AST parsing, only returns the function |
-| **Extract one class** | `extract_class` | AST parsing, only returns the class |
-| **Get function signature** | `get_signature` | Cheapest way to understand a function |
-| **Semantic search** | `semantic_search` | Embedding-based meaning search |
-| **Find similar functions** | `find_similar_functions` | Embedding distance comparison |
-| **Call graph** | `get_callers` / `get_callees` | Static analysis of call relationships |
-| **Impact analysis** | `impact_analysis` | Full blast radius before changes |
-| **Safe editing** | `preview_edit` + `apply_edit` | Auto git commit, undo support |
-| **Dependency tracing** | `get_file_deps` / `get_importers` | Both directions in one call |
-
-### Decision Flowchart
-```
-Need to search for a keyword?
-  → YES → Use native grep_search (faster, cheaper)
-  → NO ↓
-
-Need to find files by name?
-  → YES → Use native glob (faster, cheaper)
-  → NO ↓
-
-Need to read a whole file?
-  → YES → Use native read (direct, no overhead)
-  → NO ↓
-
-Need to extract one function/class?
-  → YES → Use MCP extract_function/extract_class
-  → NO ↓
-
-Need to search by meaning (not keywords)?
-  → YES → Use MCP semantic_search
-  → NO ↓
-
-Need call graph, dependencies, or impact analysis?
-  → YES → Use MCP get_callers/get_callees/impact_analysis
-  → NO ↓
-
-Need to edit code safely?
-  → YES → Use MCP preview_edit + apply_edit
-  → NO → Use native tools
-```
-
----
-
-*Code Search Engine v2.1.0 — MCP Server + FastAPI Daemon + Semantic Embeddings*
+*Code Search Engine v2.0.0 — MCP Server + FastAPI Daemon*

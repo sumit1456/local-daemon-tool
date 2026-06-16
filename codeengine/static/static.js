@@ -7,7 +7,10 @@ async function api(path, opts = {}) {
   });
   if (!r.ok) {
     const err = await r.json().catch(() => ({ detail: r.statusText }));
-    throw new Error(err.detail || r.statusText);
+    const msg = Array.isArray(err.detail)
+      ? err.detail.map(d => d.msg || JSON.stringify(d)).join('; ')
+      : (typeof err.detail === 'string' ? err.detail : JSON.stringify(err.detail));
+    throw new Error(msg || r.statusText);
   }
   return r.json();
 }
@@ -33,7 +36,8 @@ function empty(container, icon, title, sub) {
 }
 
 function escHtml(s) {
-  return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+  if (s == null) return '';
+  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
 }
 
 function getRepo() {
@@ -336,6 +340,11 @@ function initAllAutocompletes() {
   const SYMBOL_INPUTS = [
     { id: 'ss-name',    type: 'symbol' },
     { id: 'cg-symbol',  type: 'symbol' },
+    { id: 'ia-symbol',  type: 'symbol' },
+    { id: 'te-symbol',  type: 'symbol' },
+    { id: 'fh-symbol',  type: 'symbol' },
+    { id: 'sf-symbol',  type: 'symbol' },
+    { id: 'ref-symbol', type: 'symbol' },
   ];
   const DIR_INPUTS = [
     { id: 'idx-dir',    type: 'dir' },
@@ -1320,9 +1329,10 @@ document.getElementById('mb-apply-all-btn').addEventListener('click', async () =
 });
 
 /* ═══════════════════════════════════════════════════════════
-   BUILD / TEST / LINT
+   BUILD / TEST / LINT (Sandbox)
 ═══════════════════════════════════════════════════════════ */
-const buildOutput = document.getElementById('build-output');
+const buildOutput    = document.getElementById('build-output');
+const sandboxStatus  = document.getElementById('sandbox-status-text');
 
 function setBuildOutput(label, data) {
   const ok    = data.exit_code === 0;
@@ -1336,35 +1346,96 @@ function setBuildOutput(label, data) {
   else     toast(`${label} finished with errors`, 'error');
 }
 
-async function runWorker(action, langId) {
-  const lang      = document.getElementById(langId).value;
-  const repo_path = getRepo();
-  buildOutput.innerHTML = `<span class="out-label">▶ Running ${action}…</span>\n`;
+async function loadSandboxStatus() {
   try {
-    const data = await api(`/${action}`, {
-      method: 'POST',
-      body: JSON.stringify({ lang, repo_path }),
-    });
-    setBuildOutput(action, data);
+    const d = await api('/sandbox/status');
+    const stack = d.detected_stack || 'unknown';
+    sandboxStatus.textContent = `Stack: ${stack}  |  Repo: ${d.repo || '?'}`;
   } catch(e) {
-    buildOutput.innerHTML += `<span class="out-err">Error: ${escHtml(e.message)}</span>`;
-    toast(`${action} error: ` + e.message, 'error');
+    sandboxStatus.textContent = 'Stack: unreachable';
   }
 }
 
-document.getElementById('build-run-btn').addEventListener('click', () => runWorker('build', 'build-lang-build'));
-document.getElementById('test-run-btn').addEventListener('click', () => runWorker('test',  'build-lang-test'));
-document.getElementById('lint-run-btn').addEventListener('click', () => runWorker('lint',  'build-lang-lint'));
+async function setupSandbox() {
+  buildOutput.innerHTML = `<span class="out-label">▶ Setting up sandbox…</span>\n`;
+  try {
+    const d = await api('/sandbox/setup', { method: 'POST' });
+    setBuildOutput('setup_sandbox', d);
+    loadSandboxStatus();
+  } catch(e) {
+    buildOutput.innerHTML += `<span class="out-err">Error: ${escHtml(e.message)}</span>`;
+    toast('setup_sandbox error: ' + e.message, 'error');
+  }
+}
+
+async function runCompile() {
+  buildOutput.innerHTML = `<span class="out-label">▶ Compiling project…</span>\n`;
+  try {
+    const d = await api('/sandbox/compile', { method: 'POST' });
+    setBuildOutput('compile_project', d);
+  } catch(e) {
+    buildOutput.innerHTML += `<span class="out-err">Error: ${escHtml(e.message)}</span>`;
+    toast('compile_project error: ' + e.message, 'error');
+  }
+}
+
+async function runTests() {
+  const path = document.getElementById('test-path').value.trim();
+  buildOutput.innerHTML = `<span class="out-label">▶ Running tests…</span>\n`;
+  try {
+    const params = new URLSearchParams();
+    if (path) params.append('path', path);
+    const d = await api(`/sandbox/test?${params}`, {
+      method: 'POST',
+    });
+    setBuildOutput('run_tests', d);
+  } catch(e) {
+    buildOutput.innerHTML += `<span class="out-err">Error: ${escHtml(e.message)}</span>`;
+    toast('run_tests error: ' + e.message, 'error');
+  }
+}
+
+async function runLint() {
+  const file = document.getElementById('lint-file').value.trim();
+  if (!file) { toast('Enter a file path to lint', 'error'); return; }
+  buildOutput.innerHTML = `<span class="out-label">▶ Linting file…</span>\n`;
+  try {
+    const d = await api(`/sandbox/lint?file=${encodeURIComponent(file)}`);
+    setBuildOutput('check_syntax', d);
+  } catch(e) {
+    buildOutput.innerHTML += `<span class="out-err">Error: ${escHtml(e.message)}</span>`;
+    toast('check_syntax error: ' + e.message, 'error');
+  }
+}
+
+async function installDeps() {
+  buildOutput.innerHTML = `<span class="out-label">▶ Installing dependencies…</span>\n`;
+  try {
+    const d = await api('/sandbox/install-deps', { method: 'POST' });
+    setBuildOutput('install_deps', d);
+    loadSandboxStatus();
+  } catch(e) {
+    buildOutput.innerHTML += `<span class="out-err">Error: ${escHtml(e.message)}</span>`;
+    toast('install_deps error: ' + e.message, 'error');
+  }
+}
+
+document.getElementById('sandbox-status-btn')?.addEventListener('click', loadSandboxStatus);
+document.getElementById('sandbox-setup-btn')?.addEventListener('click', setupSandbox);
+document.getElementById('sandbox-deps-btn')?.addEventListener('click', installDeps);
+document.getElementById('compile-run-btn')?.addEventListener('click', runCompile);
+document.getElementById('test-run-btn')?.addEventListener('click', runTests);
+document.getElementById('lint-run-btn')?.addEventListener('click', runLint);
 
 /* ═══════════════════════════════════════════════════════════
    INDEX PAGE
 ═══════════════════════════════════════════════════════════ */
 const idxResults = document.getElementById('idx-results');
 
-document.getElementById('idx-load-btn').addEventListener('click', loadIndex);
-document.getElementById('idx-files').addEventListener('keydown', e => { if(e.key==='Enter') loadIndex(); });
-document.getElementById('idx-dir').addEventListener('keydown', e => { if(e.key==='Enter') loadIndex(); });
-document.getElementById('idx-package').addEventListener('keydown', e => { if(e.key==='Enter') loadIndex(); });
+document.getElementById('idx-load-btn')?.addEventListener('click', loadIndex);
+document.getElementById('idx-files')?.addEventListener('keydown', e => { if(e.key==='Enter') loadIndex(); });
+document.getElementById('idx-dir')?.addEventListener('keydown', e => { if(e.key==='Enter') loadIndex(); });
+document.getElementById('idx-package')?.addEventListener('keydown', e => { if(e.key==='Enter') loadIndex(); });
 
 async function loadIndex() {
   const filesInput = document.getElementById('idx-files').value.trim();
@@ -2474,3 +2545,307 @@ if (semanticSearchBtn) {
     });
   }
 }
+
+/* ═══════════════════════════════════════════════════════════
+   IMPACT ANALYSIS PAGE
+═══════════════════════════════════════════════════════════ */
+const iaResults = document.getElementById('ia-results');
+
+document.getElementById('ia-analyze-btn').addEventListener('click', () => loadImpact('impact'));
+document.getElementById('ia-blast-btn').addEventListener('click', () => loadImpact('blast'));
+document.getElementById('ia-symbol').addEventListener('keydown', e => { if(e.key==='Enter') loadImpact('impact'); });
+
+async function loadImpact(type) {
+  const symbol = document.getElementById('ia-symbol').value.trim();
+  if (!symbol) { toast('Enter a symbol name', 'error'); return; }
+
+    loading(iaResults);
+  try {
+    const endpoint = type === 'blast' ? '/search/blast-radius' : '/search/impact-analysis';
+    const paramName = type === 'blast' ? 'symbol' : 'symbol_name';
+    const params = new URLSearchParams({ [paramName]: symbol });
+    const data = await api(`${endpoint}?${params}`);
+
+    if (!data || (Array.isArray(data) && data.length === 0) || (!data.callers && !data.references && !data.direct_callers && !data.callers_by_depth)) {
+      empty(iaResults, '💥', 'No impact data', `No impact data found for "${escHtml(symbol)}".`);
+      return;
+    }
+
+    let html = `<div class="stats-bar"><span class="stats-badge">💥 ${type === 'blast' ? 'Blast Radius' : 'Impact Analysis'}</span> for <code style="font-family:var(--font-mono);background:var(--bg-elevated);padding:2px 6px;border-radius:4px;">${escHtml(symbol)}</code></div>`;
+
+    // Blast radius format
+    if (data.callers_by_depth) {
+      html += `<div class="summary-stats">
+        <div class="summary-stat"><span class="stat-icon">📊</span><div><div class="stat-value">${data.total_affected || 0}</div><div class="stat-label">Total Affected</div></div></div>
+        <div class="summary-stat"><span class="stat-icon">📞</span><div><div class="stat-value">${Object.keys(data.callers_by_depth).length}</div><div class="stat-label">Depth Levels</div></div></div>
+      </div>`;
+
+      Object.entries(data.callers_by_depth).sort((a,b) => Number(a[0]) - Number(b[0])).forEach(([depth, funcs]) => {
+        html += `<div style="margin-bottom:12px;"><h3 style="font-size:13px;font-weight:600;color:var(--accent);margin-bottom:6px;">Depth ${depth} (${funcs.length} functions)</h3>`;
+        funcs.forEach(f => {
+          html += `<div class="symbol-card" onclick="fillExtract('${escHtml(f.file || '')}',${f.line_start || 1},${(f.line_start || 1) + 5})">
+            <span class="symbol-kind kind-function">L${depth}</span>
+            <span class="symbol-name">${escHtml(f.name || f)}</span>
+            <span class="symbol-file">${escHtml(f.file || '')}</span>
+          </div>`;
+        });
+        html += `</div>`;
+      });
+    }
+
+    // Impact analysis format
+    if (data.callers && data.callers.length > 0) {
+      html += `<div style="margin-bottom:12px;"><h3 style="font-size:13px;font-weight:600;color:var(--accent);margin-bottom:6px;">Direct Callers (${data.direct_callers})</h3>`;
+      data.callers.forEach(c => {
+        html += `<div class="symbol-card" onclick="fillExtract('${escHtml(c.file || '')}',${c.line || 1},${(c.line || 1) + 5})">
+          <span class="symbol-kind kind-function">caller</span>
+          <span class="symbol-name">${escHtml(c.name || c)}</span>
+          <span class="symbol-file">${escHtml(c.file || '')}</span>
+        </div>`;
+      });
+      html += `</div>`;
+    }
+
+    if (data.all_references) {
+      html += `<div style="margin-bottom:12px;"><h3 style="font-size:13px;font-weight:600;color:var(--warning);margin-bottom:6px;">All References (${data.all_references.length})</h3>`;
+      data.all_references.forEach(r => {
+        html += `<div class="symbol-card" onclick="fillExtract('${escHtml(r.file || '')}',${r.line || 1},${(r.line || 1) + 5})">
+          <span class="symbol-kind kind-import">ref</span>
+          <span class="symbol-name">${escHtml(r.name || r)}</span>
+          <span class="symbol-file">${escHtml(r.file || '')}</span>
+        </div>`;
+      });
+      html += `</div>`;
+    }
+
+    if (data.affected_files) {
+      html += `<div><h3 style="font-size:13px;font-weight:600;color:var(--danger);margin-bottom:6px;">Affected Files (${data.affected_files.length})</h3>`;
+      data.affected_files.forEach(f => {
+        html += `<div class="file-item" onclick="fillExtract('${escHtml(f)}',1,50)">📄 ${escHtml(f)}</div>`;
+      });
+      html += `</div>`;
+    }
+
+    iaResults.innerHTML = html;
+  } catch(e) {
+    empty(iaResults, '⚠️', 'Analysis failed', e.message);
+    toast('Error: ' + e.message, 'error');
+  }
+}
+
+/* ═══════════════════════════════════════════════════════════
+   TRACE EXECUTION PAGE
+═══════════════════════════════════════════════════════════ */
+const teResults = document.getElementById('te-results');
+
+document.getElementById('te-trace-btn').addEventListener('click', () => loadTrace('trace'));
+document.getElementById('te-flow-btn').addEventListener('click', () => loadTrace('flow'));
+document.getElementById('te-symbol').addEventListener('keydown', e => { if(e.key==='Enter') loadTrace('trace'); });
+
+async function loadTrace(type) {
+  const symbol = document.getElementById('te-symbol').value.trim();
+  const depth = document.getElementById('te-depth').value || 5;
+  if (!symbol) { toast('Enter a symbol name', 'error'); return; }
+
+  loading(teResults);
+  try {
+    const endpoint = type === 'flow' ? '/search/endpoint-flow' : '/search/trace-execution';
+    const paramName = type === 'flow' ? 'entry' : 'symbol_name';
+    const params = new URLSearchParams({ [paramName]: symbol, max_depth: depth });
+    const data = await api(`${endpoint}?${params}`);
+
+    if (!data || (!data.trace && !data.flow && (!data.chain || data.chain.length === 0))) {
+      empty(teResults, '🔀', 'No trace data', `No execution trace found for "${escHtml(symbol)}".`);
+      return;
+    }
+
+    let html = `<div class="stats-bar"><span class="stats-badge">🔀 ${type === 'flow' ? 'Endpoint Flow' : 'Execution Trace'}</span> from <code style="font-family:var(--font-mono);background:var(--bg-elevated);padding:2px 6px;border-radius:4px;">${escHtml(symbol)}</code></div>`;
+
+    const chain = data.chain || data.trace || data.flow || [];
+    if (Array.isArray(chain)) {
+      chain.forEach(item => {
+        const depth = item.depth || 0;
+        const indent = '  '.repeat(depth);
+        const kindClass = depth === 0 ? 'kind-function' : (depth <= 2 ? 'kind-class' : 'kind-method');
+        const name = item.name || (item.caller ? `${item.caller} → ${item.callee}` : '') || String(item);
+        const file = item.file || item.caller_file || '';
+        const line = item.line || item.caller_line || 0;
+        html += `<div class="symbol-card" onclick="fillExtract('${escHtml(file)}',${line || 1},${(line || 1) + 5})" style="margin-left:${depth * 20}px;">
+          <span class="symbol-kind ${kindClass}">L${depth}</span>
+          <span class="symbol-name">${indent}${escHtml(name)}</span>
+          <span class="symbol-file">${escHtml(file)}${line ? ':' + line : ''}</span>
+        </div>`;
+      });
+    }
+
+    teResults.innerHTML = html;
+  } catch(e) {
+    empty(teResults, '⚠️', 'Trace failed', e.message);
+    toast('Error: ' + e.message, 'error');
+  }
+}
+
+/* ═══════════════════════════════════════════════════════════
+   FUNCTION HISTORY PAGE
+═══════════════════════════════════════════════════════════ */
+const fhResults = document.getElementById('fh-results');
+
+document.getElementById('fh-history-btn').addEventListener('click', loadFunctionHistory);
+document.getElementById('fh-index-btn').addEventListener('click', indexGitHistory);
+document.getElementById('fh-symbol').addEventListener('keydown', e => { if(e.key==='Enter') loadFunctionHistory(); });
+
+async function loadFunctionHistory() {
+  const symbol = document.getElementById('fh-symbol').value.trim();
+  const limit = document.getElementById('fh-limit').value || 20;
+  if (!symbol) { toast('Enter a function name', 'error'); return; }
+
+  loading(fhResults);
+  try {
+    const data = await api(`/search/function-history?${new URLSearchParams({ symbol: symbol, limit })}`);
+
+    if (!data || !data.history || data.history.length === 0) {
+      empty(fhResults, '📜', 'No history found', `No git history found for "${escHtml(symbol)}". Try indexing git history first.`);
+      return;
+    }
+
+    let html = `<div class="stats-bar"><span class="stats-badge">📜 ${data.history.length} commit${data.history.length!==1?'s':''}</span> for <code style="font-family:var(--font-mono);background:var(--bg-elevated);padding:2px 6px;border-radius:4px;">${escHtml(symbol)}</code></div>`;
+
+    data.history.forEach(commit => {
+      const changeType = commit.change_type || 'modified';
+      const typeColor = { signature_change: 'var(--danger)', logic_edit: 'var(--warning)', new: 'var(--success)', deleted: 'var(--danger)' }[changeType] || 'var(--text-muted)';
+      html += `<div class="match-card">
+        <div class="match-header">
+          <span class="file-icon" style="color:${typeColor};">●</span>
+          <span class="file-path" style="font-family:var(--font-mono);font-size:11px;">${escHtml(commit.commit || commit.hash || commit.sha || '').slice(0, 8)}</span>
+          <span class="line-badge" style="background:${typeColor}20;color:${typeColor};">${changeType}</span>
+        </div>
+        <div class="match-body">
+          <div style="font-size:12.5px;color:var(--text-primary);margin-bottom:4px;">${escHtml(commit.message || '')}</div>
+          <div style="font-size:11px;color:var(--text-muted);">${escHtml(commit.date || '')}</div>
+        </div>
+      </div>`;
+    });
+
+    fhResults.innerHTML = html;
+  } catch(e) {
+    empty(fhResults, '⚠️', 'History failed', e.message);
+    toast('Error: ' + e.message, 'error');
+  }
+}
+
+async function indexGitHistory() {
+  toast('Indexing git history...', 'info');
+  try {
+    const data = await api('/git-index', { method: 'POST' });
+    toast(`Indexed ${data.indexed_commits || 0} commits ✅`, 'success');
+  } catch(e) {
+    toast('Failed to index git history: ' + e.message, 'error');
+  }
+}
+
+/* ═══════════════════════════════════════════════════════════
+   SIMILAR FUNCTIONS PAGE
+═══════════════════════════════════════════════════════════ */
+const sfResults = document.getElementById('sf-results');
+
+document.getElementById('sf-search-btn').addEventListener('click', loadSimilarFunctions);
+document.getElementById('sf-symbol').addEventListener('keydown', e => { if(e.key==='Enter') loadSimilarFunctions(); });
+
+async function loadSimilarFunctions() {
+  const symbol = document.getElementById('sf-symbol').value.trim();
+  const limit = document.getElementById('sf-limit').value || 5;
+  if (!symbol) { toast('Enter a function name', 'error'); return; }
+
+  loading(sfResults);
+  try {
+    const data = await api(`/search/similar?${new URLSearchParams({ symbol: symbol, limit })}`);
+
+    if (!data || !data.results || data.results.length === 0) {
+      empty(sfResults, '🧬', 'No similar functions found', `No similar functions found for "${escHtml(symbol)}". Make sure embeddings are enabled.`);
+      return;
+    }
+
+    let html = `<div class="stats-bar"><span class="stats-badge">🧬 ${data.results.length} similar</span> to <code style="font-family:var(--font-mono);background:var(--bg-elevated);padding:2px 6px;border-radius:4px;">${escHtml(symbol)}</code></div>`;
+
+    data.results.forEach(r => {
+      const distance = r.distance ? r.distance.toFixed(3) : '?';
+      const similarity = r.distance ? ((1 - r.distance) * 100).toFixed(1) : '?';
+      html += `<div class="symbol-card" onclick="fillExtract('${escHtml(r.file || '')}',${r.line_start || 1},${(r.line_start || 1) + 5})">
+        <span class="symbol-kind kind-${r.kind || 'function'}">${r.kind || 'func'}</span>
+        <span class="symbol-name">${escHtml(r.name || '')}</span>
+        <span class="symbol-file">${escHtml(r.file || '')}</span>
+        <span class="symbol-lines" title="Similarity: ${similarity}%">${similarity}%</span>
+      </div>`;
+    });
+
+    sfResults.innerHTML = html;
+  } catch(e) {
+    empty(sfResults, '⚠️', 'Search failed', e.message);
+    toast('Error: ' + e.message, 'error');
+  }
+}
+
+/* ═══════════════════════════════════════════════════════════
+   REFERENCES PAGE
+═══════════════════════════════════════════════════════════ */
+const refResults = document.getElementById('ref-results');
+
+document.getElementById('ref-count-btn').addEventListener('click', () => loadReferences('count'));
+document.getElementById('ref-usages-btn').addEventListener('click', () => loadReferences('usages'));
+document.getElementById('ref-symbol').addEventListener('keydown', e => { if(e.key==='Enter') loadReferences('count'); });
+
+async function loadReferences(type) {
+  const symbol = document.getElementById('ref-symbol').value.trim();
+  if (!symbol) { toast('Enter a symbol name', 'error'); return; }
+
+  loading(refResults);
+  try {
+    const endpoint = type === 'usages' ? '/search/usages' : '/search/count-references';
+    const params = new URLSearchParams({ symbol_name: symbol });
+    const data = await api(`${endpoint}?${params}`);
+
+    if (type === 'count') {
+      const count = data.count || data.total || 0;
+      const files = data.files || [];
+      let html = `<div class="stats-bar"><span class="stats-badge">📊 ${count} reference${count!==1?'s':''}</span> for <code style="font-family:var(--font-mono);background:var(--bg-elevated);padding:2px 6px;border-radius:4px;">${escHtml(symbol)}</code></div>`;
+      
+      html += `<div class="summary-stats">
+        <div class="summary-stat"><span class="stat-icon">📊</span><div><div class="stat-value">${count}</div><div class="stat-label">References</div></div></div>
+        <div class="summary-stat"><span class="stat-icon">📄</span><div><div class="stat-value>${files.length}</div><div class="stat-label">Files</div></div></div>
+      </div>`;
+
+      if (files.length > 0) {
+        html += `<div style="margin-top:12px;">`;
+        files.forEach(f => {
+          const fname = typeof f === 'string' ? f : f.file;
+          const fcount = typeof f === 'string' ? '' : ` (${f.count || 0})`;
+          html += `<div class="file-item" onclick="fillExtract('${escHtml(fname)}',1,50)">📄 ${escHtml(fname)}${fcount}</div>`;
+        });
+        html += `</div>`;
+      }
+      refResults.innerHTML = html;
+    } else {
+      const usages = data.usages || data.results || data || [];
+      if (!Array.isArray(usages) || usages.length === 0) {
+        empty(refResults, '📊', 'No usages found', `No usages found for "${escHtml(symbol)}".`);
+        return;
+      }
+
+      let html = `<div class="stats-bar"><span class="stats-badge">📊 ${usages.length} usage${usages.length!==1?'s':''}</span> for <code style="font-family:var(--font-mono);background:var(--bg-elevated);padding:2px 6px;border-radius:4px;">${escHtml(symbol)}</code></div>`;
+      usages.forEach(u => {
+        html += `<div class="symbol-card" onclick="fillExtract('${escHtml(u.file || '')}',${u.line || 1},${(u.line || 1) + 5})">
+          <span class="symbol-kind kind-import">usage</span>
+          <span class="symbol-name">${escHtml(u.context || u.text || u.name || symbol)}</span>
+          <span class="symbol-file">${escHtml(u.file || '')}${u.line ? ':' + u.line : ''}</span>
+        </div>`;
+      });
+      refResults.innerHTML = html;
+    }
+  } catch(e) {
+    empty(refResults, '⚠️', 'Search failed', e.message);
+    toast('Error: ' + e.message, 'error');
+  }
+}
+
+// ── INIT ──
+loadSandboxStatus();

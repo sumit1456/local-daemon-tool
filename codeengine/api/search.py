@@ -8,7 +8,9 @@ from codeengine.core.search_engine import (
     get_file_imports, get_importers, get_file_deps,
     get_type_info, get_defined_symbols, count_references,
     impact_analysis, trace_execution, get_edit_context,
+    get_blast_radius, get_error_context, trace_endpoint_flow,
 )
+from codeengine.core.git_engine import get_function_history
 from codeengine.core.ast_engine import get_function, get_class, parse_code_string
 from codeengine.models.search_models import SearchResponse, Symbol, FunctionResult
 from pydantic import BaseModel
@@ -686,3 +688,46 @@ async def find_similar_route(
         return {"symbol": symbol, "results": results[:limit]}
 
 
+# ── Feature 1: Blast Radius ────────────────────────────────────────────────────
+
+@router.get("/blast-radius")
+async def blast_radius_route(symbol: str = Query(..., description="Symbol name")):
+    """Return precomputed transitive blast radius for a symbol. O(1) lookup."""
+    return await get_blast_radius(symbol)
+
+
+# ── Feature 2: Error Diagnostic Bundle ────────────────────────────────────────
+
+@router.get("/error-context")
+async def error_context_route(
+    error: str = Query(..., description="The full error message text"),
+    file: str = Query(..., description="Relative file path where the error occurred"),
+    line: int = Query(..., description="Line number of the error"),
+):
+    """
+    Return a pre-packaged diagnostic bundle for a compiler/linter error.
+    Includes type signatures, enclosing function, imports, and callers.
+    """
+    return await get_error_context(error, file, line)
+
+
+# ── Feature 3: Git Function History ───────────────────────────────────────────
+
+@router.get("/function-history")
+async def function_history_route(
+    symbol: str = Query(..., description="Function or method name"),
+    limit: int = Query(20, description="Max number of commits to return"),
+):
+    """Return precomputed git change history for a symbol."""
+    return await get_function_history(symbol, limit)
+
+
+# ── Feature 4: Endpoint Flow Trace ────────────────────────────────────────────
+
+@router.get("/endpoint-flow")
+async def endpoint_flow_route(
+    entry: str = Query(..., description="Entry point function name or partial name"),
+    max_depth: int = Query(8, description="Maximum call chain depth"),
+):
+    """Trace execution flow from an entry point function through all callees."""
+    return await trace_endpoint_flow(entry, max_depth)

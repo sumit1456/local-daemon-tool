@@ -223,6 +223,11 @@ async def index_repo(root: str, on_progress=None) -> int:
         await resolve_callee_ids(db)
         await db.commit()
 
+        # Rebuild transitive closure after every full reindex
+        from codeengine.core.search_engine import build_transitive_closure
+        await build_transitive_closure()
+        logger.info("Transitive closure rebuilt.")
+
     summary = {"indexed": indexed_count, "skipped": skipped_count,
                "errors": error_count, "total": total, "repo": str(root_path)}
     logger.info("Indexing complete: %d indexed, %d skipped, %d errors (of %d files)",

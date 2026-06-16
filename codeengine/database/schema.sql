@@ -92,3 +92,47 @@ CREATE TABLE IF NOT EXISTS embeddings (
     created_at  REAL NOT NULL
 );
 
+-- Precomputed transitive closure of the call graph.
+-- For every symbol S, stores ALL symbols that transitively call S.
+-- Rebuilt automatically after every /reindex.
+CREATE TABLE IF NOT EXISTS transitive_callers (
+    symbol_id       INTEGER NOT NULL REFERENCES symbols(id) ON DELETE CASCADE,
+    caller_id       INTEGER NOT NULL REFERENCES symbols(id) ON DELETE CASCADE,
+    depth           INTEGER NOT NULL,   -- 1 = direct, 2 = grandparent, etc.
+    PRIMARY KEY (symbol_id, caller_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_tc_symbol ON transitive_callers(symbol_id);
+CREATE INDEX IF NOT EXISTS idx_tc_caller ON transitive_callers(caller_id);
+
+-- Precomputed git change history per symbol.
+-- Populated by POST /git-index and updated incrementally.
+CREATE TABLE IF NOT EXISTS git_history (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    symbol_id   INTEGER REFERENCES symbols(id) ON DELETE CASCADE,
+    file_path   TEXT NOT NULL,
+    commit_hash TEXT NOT NULL,
+    commit_date TEXT NOT NULL,       -- ISO-8601 string
+    commit_msg  TEXT NOT NULL,
+    change_type TEXT NOT NULL,       -- 'signature_change' | 'logic_edit' | 'new' | 'deleted'
+    lines_added INTEGER DEFAULT 0,
+    lines_removed INTEGER DEFAULT 0,
+    UNIQUE(symbol_id, commit_hash)
+);
+
+CREATE INDEX IF NOT EXISTS idx_git_history_symbol ON git_history(symbol_id);
+CREATE INDEX IF NOT EXISTS idx_git_history_file   ON git_history(file_path);
+CREATE INDEX IF NOT EXISTS idx_git_history_date   ON git_history(commit_date DESC);
+
+-- Tracks the state of sandbox containers per stack.
+-- One row per stack (python, node, java, go, rust).
+CREATE TABLE IF NOT EXISTS sandbox_state (
+    stack           TEXT    PRIMARY KEY,   -- 'python' | 'node' | 'java' | 'go' | 'rust'
+    container_id    TEXT,                  -- Docker container ID (null if not running)
+    image           TEXT    NOT NULL,      -- Docker image used
+    deps_installed  INTEGER DEFAULT 0,     -- 0 = pending, 1 = done
+    created_at      REAL,
+    last_used_at    REAL
+);
+
+

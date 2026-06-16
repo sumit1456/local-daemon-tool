@@ -110,6 +110,7 @@ load_dotenv()
 from codeengine.api.search import router as search_router
 from codeengine.api.edit import router as edit_router
 from codeengine.api.build import router as build_router
+from codeengine.api.sandbox import router as sandbox_router
 from codeengine.database.sqlite import init_db
 from codeengine.core.index_engine import index_repo, start_watcher, clear_index, stop_watcher
 from codeengine.core.embedding_engine import get_status as get_embedding_status
@@ -139,7 +140,9 @@ async def lifespan(app: FastAPI):
     yield
 
     stop_watcher()
-    
+    from codeengine.core.sandbox_engine import stop_all_sandboxes
+    stop_all_sandboxes()
+    logger.info("All sandbox containers stopped.")
 
 class ReindexRequest(BaseModel):
     repo_path: str
@@ -193,6 +196,7 @@ async def request_logging_middleware(request, call_next):
 app.include_router(search_router)
 app.include_router(edit_router)
 app.include_router(build_router)
+app.include_router(sandbox_router)
 
 @app.get("/workspace")
 async def get_workspace():
@@ -245,6 +249,15 @@ async def reindex_repo(body: ReindexRequest):
         import asyncio
         asyncio.create_task(_run_embedding())
     return {"status": "ok", "indexed": count, "repo": repo_path}
+
+
+@app.post("/git-index")
+async def git_index_route():
+    """Index git commit history for all currently indexed symbols."""
+    from codeengine.core.git_engine import index_git_history
+    repo = os.getenv("REPO_PATH", ".")
+    count = await index_git_history(repo)
+    return {"indexed_commits": count}
 
 
 @app.post("/reindex/stream")

@@ -1,5 +1,5 @@
 """
-not recommended to use
+not recommended to useg
 run_docker.py — Launch Code Search Engine in Docker.
 
 Runs the FastAPI daemon inside a container while keeping

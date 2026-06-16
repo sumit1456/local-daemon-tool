@@ -17,3 +17,4 @@ python-ulid==2.2.0
 pywebview==5.1
 sqlite-vec>=0.1.7
 fastembed>=0.3.0
+docker>=7.0.0
