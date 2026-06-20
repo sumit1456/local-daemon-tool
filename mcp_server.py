@@ -365,7 +365,14 @@ async def get_overview(
         limit: Max number of files to return (default: 50).
         offset: Number of files to skip for pagination (default: 0).
     """
-    return await _get("/search/overview", files=files, dir=dir, package=package, q=q, limit=limit, offset=offset)
+    has_filter = any([files, dir, package, q])
+    if not has_filter:
+        return {"error": "At least one filter required. Use dir, package, query, or files param."}
+    try:
+        return await _get("/search/overview", files=files, dir=dir, package=package, q=q, limit=limit, offset=offset)
+    except httpx.HTTPStatusError as e:
+        detail = e.response.json().get("detail", str(e)) if e.response.content else str(e)
+        return {"error": detail}
 
 
 @mcp.tool()
