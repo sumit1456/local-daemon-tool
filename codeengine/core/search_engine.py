@@ -321,9 +321,10 @@ async def search_symbol(
     file_filter: list[str] | None = None,
     dir_filter: str | None = None,
     package_filter: str | None = None,
-) -> list[Symbol]:
+) -> list[str]:
     """
     Search symbols in SQLite by name, ranked: exact → prefix → substring.
+    Returns compact format: "name:kind:file:line_start-line_end"
 
     Args:
         name:  Symbol name to search (min 2 chars).
@@ -373,19 +374,13 @@ async def search_symbol(
     query_str += " ORDER BY rank, s.name LIMIT ?"
     params.append(limit)
 
-    symbols: list[Symbol] = []
+    results: list[str] = []
     async with get_db() as db:
         async with db.execute(query_str, params) as cursor:
             rows = await cursor.fetchall()
             for r in rows:
-                symbols.append(Symbol(
-                    name=r["name"],
-                    kind=r["kind"],
-                    file=r["file"],
-                    line_start=r["line_start"],
-                    line_end=r["line_end"],
-                ))
-    return symbols
+                results.append(f"{r['name']}:{r['kind'][0]}:{r['file']}:{r['line_start']}-{r['line_end']}")
+    return results
 
 
 async def find_file(pattern: str, root: str) -> list[str]:
