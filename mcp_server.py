@@ -217,7 +217,8 @@ async def search_symbol(
 ) -> dict:
     """
     Search the AST symbol index for functions, classes, and methods by name.
-    Faster and more precise than text search for finding where a symbol is defined.
+    Returns compact format: "name:kind:file:line_start-line_end"
+    Agent can call extract_function(file, name) directly on results.
 
     Args:
         name: Symbol name to find (partial matches supported).
