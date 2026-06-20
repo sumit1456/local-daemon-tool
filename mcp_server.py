@@ -110,55 +110,31 @@ async def _get(endpoint: str, **params) -> dict:
     """Make a GET request to the local daemon."""
     filtered = {k: v for k, v in params.items() if v is not None}
     log.debug("GET %s %s", endpoint, filtered)
-    try:
-        async with httpx.AsyncClient(base_url=DAEMON_BASE, timeout=TIMEOUT) as client:
-            r = await client.get(endpoint, params=filtered)
-            log.debug("GET %s -> %s (%dms)", endpoint, r.status_code, r.elapsed.total_seconds() * 1000)
-            r.raise_for_status()
-            return r.json()
-    except httpx.HTTPStatusError as e:
-        detail = e.response.json().get("detail", str(e)) if e.response.content else str(e)
-        return {"error": detail}
-    except httpx.ConnectError:
-        return {"error": "Daemon not running. Start with: pythonw launcher.pyw"}
-    except Exception as e:
-        return {"error": str(e)}
+    async with httpx.AsyncClient(base_url=DAEMON_BASE, timeout=TIMEOUT) as client:
+        r = await client.get(endpoint, params=filtered)
+        log.debug("GET %s -> %s (%dms)", endpoint, r.status_code, r.elapsed.total_seconds() * 1000)
+        r.raise_for_status()
+        return r.json()
 
 
 async def _post(endpoint: str, body: dict) -> dict:
     """Make a POST request to the local daemon."""
     log.debug("POST %s %s", endpoint, {k: v[:80] if isinstance(v, str) and len(v) > 80 else v for k, v in body.items()})
-    try:
-        async with httpx.AsyncClient(base_url=DAEMON_BASE, timeout=TIMEOUT) as client:
-            r = await client.post(endpoint, json=body)
-            log.debug("POST %s -> %s (%dms)", endpoint, r.status_code, r.elapsed.total_seconds() * 1000)
-            r.raise_for_status()
-            return r.json()
-    except httpx.HTTPStatusError as e:
-        detail = e.response.json().get("detail", str(e)) if e.response.content else str(e)
-        return {"error": detail}
-    except httpx.ConnectError:
-        return {"error": "Daemon not running. Start with: pythonw launcher.pyw"}
-    except Exception as e:
-        return {"error": str(e)}
+    async with httpx.AsyncClient(base_url=DAEMON_BASE, timeout=TIMEOUT) as client:
+        r = await client.post(endpoint, json=body)
+        log.debug("POST %s -> %s (%dms)", endpoint, r.status_code, r.elapsed.total_seconds() * 1000)
+        r.raise_for_status()
+        return r.json()
 
 
 async def _delete(endpoint: str, params: dict | None = None) -> dict:
     """Make a DELETE request to the local daemon."""
     log.debug("DELETE %s %s", endpoint, params or {})
-    try:
-        async with httpx.AsyncClient(base_url=DAEMON_BASE, timeout=TIMEOUT) as client:
-            r = await client.delete(endpoint, params=params or {})
-            log.debug("DELETE %s -> %s (%dms)", endpoint, r.status_code, r.elapsed.total_seconds() * 1000)
-            r.raise_for_status()
-            return r.json()
-    except httpx.HTTPStatusError as e:
-        detail = e.response.json().get("detail", str(e)) if e.response.content else str(e)
-        return {"error": detail}
-    except httpx.ConnectError:
-        return {"error": "Daemon not running. Start with: pythonw launcher.pyw"}
-    except Exception as e:
-        return {"error": str(e)}
+    async with httpx.AsyncClient(base_url=DAEMON_BASE, timeout=TIMEOUT) as client:
+        r = await client.delete(endpoint, params=params or {})
+        log.debug("DELETE %s -> %s (%dms)", endpoint, r.status_code, r.elapsed.total_seconds() * 1000)
+        r.raise_for_status()
+        return r.json()
 
 
 # ── Tools ─────────────────────────────────────────────────────────────────────
@@ -392,11 +368,7 @@ async def get_overview(
     has_filter = any([files, dir, package, q])
     if not has_filter:
         return {"error": "At least one filter required. Use dir, package, query, or files param."}
-    try:
-        return await _get("/search/overview", files=files, dir=dir, package=package, q=q, limit=limit, offset=offset)
-    except httpx.HTTPStatusError as e:
-        detail = e.response.json().get("detail", str(e)) if e.response.content else str(e)
-        return {"error": detail}
+    return await _get("/search/overview", files=files, dir=dir, package=package, q=q, limit=limit, offset=offset)
 
 
 @mcp.tool()
