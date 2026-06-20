@@ -1489,24 +1489,22 @@ async def get_repo_overview(
     offset: int = 0,
 ) -> dict:
     """
-    Repository overview — summary or detailed depending on filters.
+    Repository overview — compact file listing + call graph edges.
 
-    No filters → summary mode (~300 tokens):
-        dir breakdown, languages, symbol kinds, edge stats, top callers/callees.
+    Requires at least one filter (files, dir, package, or query).
+    Returns flat, token-efficient format (~8KB for 10 files vs ~260KB before).
 
-    With filters → detailed mode (~500-5k tokens):
-        paginated file list + filtered call edges + lookup maps.
-
-    Recommended agent flow:
-        1. get_overview()              — understand repo shape (summary)
-        2. get_overview(dir="core")    — zoom into area (paginated + edges)
-        3. get_index(files=["x.py"])   — single file symbols
-        4. get_signature(...)          — just sig + docstring
+    Agent flow:
+        1. get_overview(dir="core")    — zoom into area
+        2. get_index(files=["x.py"])   — single file symbols
+        3. get_signature(...)          — just sig + docstring
     """
     if files is not None and len(files) == 0:
-        raise ValueError("Pass None for full repo, or non-empty list of file paths.")
+        raise ValueError("Pass non-empty list of file paths, or use dir/package/query filters.")
 
     has_filters = any([files, dir_filter, package_filter, query_filter])
+    if not has_filters:
+        raise ValueError("At least one filter required. Use dir, package, query, or files.")
 
     all_files = await _query_index(
         file_filter=files,
@@ -1515,12 +1513,6 @@ async def get_repo_overview(
         query_filter=query_filter,
     )
 
-    if not has_filters:
-        # Summary mode: index summary + edge stats
-        all_edges = await _query_call_edges()
-        return _build_overview_summary(all_files, all_edges)
-
-    # Detailed mode: paginated files + filtered edges
     all_edges = await _query_call_edges()
 
     total_files = len(all_files)
@@ -1536,19 +1528,38 @@ async def get_repo_overview(
     else:
         filtered_edges = []
 
-    callees, callers = _build_lookup_maps(filtered_edges)
     has_more = offset + limit < total_files
 
+    # Compact files: flatten symbols into "name:kind:line-end" string
+    compact_files = []
+    for fi in sliced_files:
+        syms = " ".join(
+            f"{s.name}:{s.kind[0]}:{s.line_start}-{s.line_end}"
+            for s in fi.symbols
+        )
+        compact_files.append({"path": fi.file, "symbols": syms})
+
+    # Compact edges: group by caller, "caller@line -> callee, callee2"
+    edge_groups: dict[str, list[str]] = {}
+    for e in filtered_edges:
+        key = f"{e.caller_name}@{e.caller_line}"
+        edge_groups.setdefault(key, [])
+        if e.callee_name and e.callee_name not in edge_groups[key]:
+            edge_groups[key].append(e.callee_name)
+
+    compact_edges = [
+        f"{k} -> {', '.join(v)}"
+        for k, v in edge_groups.items()
+    ]
+
     return {
-        "total_files": total_files,
+        "total": total_files,
         "offset": offset,
         "limit": limit,
         "has_more": has_more,
         "next_offset": offset + limit if has_more else None,
-        "files": sliced_files,
-        "edges": filtered_edges,
-        "callees": callees,
-        "callers": callers,
+        "files": compact_files,
+        "edges": compact_edges,
     }
 
 
@@ -1957,4 +1968,4 @@ async def trace_endpoint_flow(entry_point: str, max_depth: int = 8) -> dict:
         "max_depth_reached": max(v["depth"] for v in visited.values()) if visited else 0,
         "total_nodes": len(chain),
         "chain": chain,
-    }
+    }
