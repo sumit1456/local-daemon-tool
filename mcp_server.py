@@ -899,11 +899,11 @@ TOOLS_DOCS = {
                 "tradeoff": "Slower than native grep due to HTTP overhead, but integrates with other tools for context."
             },
             "search_symbol": {
-                "description": "Search AST symbol index for functions, classes, methods by name. Faster and more precise than text search.",
+                "description": "Search AST symbol index for functions, classes, methods by name. Returns compact format: name:kind:file:line_start-line_end. Agent can call extract_function directly on results.",
                 "params": {"name": "string (required)", "kind": "function|class|method|interface"},
-                "token_cost": "~100-300 tokens",
+                "token_cost": "~50-100 tokens",
                 "use_when": "Finding exact symbol definitions, locating where a function/class is defined",
-                "tradeoff": "Only finds definitions, not usages. Use get_edit_context or count_references for full picture."
+                "tradeoff": "AST-aware (kind + line ranges). Requires indexed repo. For simple grep, use native search_code."
             },
             "find_file": {
                 "description": "Find files by name pattern using fd.",
