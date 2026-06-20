@@ -401,11 +401,11 @@ async def get_tools():
                     "tradeoff": "Good for scoped searches. Use for initial exploration."
                 },
                 "get_overview": {
-                    "description": "Get full repository overview including symbol call graph.",
+                    "description": "Get compact file listing + call graph edges. Requires at least one filter (dir, package, query, or files). Returns flattened symbols and grouped edges (~3KB for 10 files).",
                     "params": {"files": "list of strings", "dir": "directory prefix filter", "package": "package path filter", "q": "substring match on file path", "limit": "int (default: 50)", "offset": "int (default: 0)"},
-                    "token_cost": "~500-1000 tokens",
-                    "use_when": "Understanding repo architecture, finding most connected files, top callers/callees",
-                    "tradeoff": "Expensive but gives complete picture of codebase structure."
+                    "token_cost": "~200-500 tokens",
+                    "use_when": "Zooming into a directory or package, understanding call graph for a code area",
+                    "tradeoff": "Requires filter. Compact format saves tokens vs old verbose format."
                 }
             },
             "ast_extraction": {
