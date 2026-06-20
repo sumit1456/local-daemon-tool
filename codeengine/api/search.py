@@ -143,7 +143,7 @@ async def get_overview_route(
     limit: int = Query(50, description="Max number of files to return"),
     offset: int = Query(0, description="Number of files to skip"),
 ):
-    """Get a complete overview of the repository including call edges."""
+    """Get compact file listing + call graph edges. Requires at least one filter."""
     try:
         return await get_repo_overview(
             files=files,
