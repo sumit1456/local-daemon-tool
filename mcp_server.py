@@ -354,11 +354,11 @@ async def get_overview(
     offset: int = 0,
 ) -> dict:
     """
-    Get a full repository overview including the symbol call graph.
-    Useful for understanding the architecture of a codebase before making changes.
+    Get compact file listing + call graph edges. Requires at least one filter.
+    Returns flattened symbols per file and grouped call edges (~3KB for 10 files).
 
     Args:
-        files: Optional list of specific files to scope the overview to. Omit for the full repo.
+        files: List of specific files to scope the overview to.
         dir: Directory prefix filter (e.g. "src/core").
         package: Package path filter (e.g. "codeengine.core").
         q: Substring match on file path.
@@ -697,7 +697,7 @@ async def stop_sandbox(stack: str) -> dict:
     Stop and remove a specific sandbox container.
 
     Args:
-        stack: Stack to stop — python | node | java | go | rust.
+        stack: Stack to stop — python | node | java-maven | java-gradle | go | rust | ruby | php | cpp.
     """
     return await _delete("/sandbox/stop", params={"stack": stack})
 
@@ -866,6 +866,18 @@ async def run_tests(test_path: str | None = None) -> dict:
     """
     log.info("[run_tests] test_path=%s", test_path)
     return await _post("/sandbox/test", {"path": test_path} if test_path else {})
+
+
+@mcp.tool()
+async def install_deps() -> dict:
+    """
+    Reinstall all dependencies (system packages + project deps) inside the Docker sandbox.
+    Useful when deps are stale or container was rebuilt.
+
+    Call setup_sandbox() first if not already done.
+    """
+    log.info("[install_deps] Installing deps in sandbox...")
+    return await _post("/sandbox/install-deps", {})
 
 
 # ── Tools Documentation Endpoint ────────────────────────────────────────────
@@ -1052,6 +1064,57 @@ TOOLS_DOCS = {
                 "token_cost": "~50-100 tokens",
                 "use_when": "When an edit breaks things or is wrong",
                 "tradeoff": "Creates a new revert commit. Does not delete history."
+            }
+        },
+        "sandbox": {
+            "setup_sandbox": {
+                "description": "Detect the project stack and start a Docker sandbox container with deps installed.",
+                "params": {},
+                "token_cost": "~100-200 tokens",
+                "use_when": "Before running check_syntax, compile_project, or run_tests",
+                "tradeoff": "Idempotent. Safe to call multiple times."
+            },
+            "sandbox_status": {
+                "description": "Return Docker availability and detected stack for the current repo.",
+                "params": {},
+                "token_cost": "~50-100 tokens",
+                "use_when": "Checking if sandbox is ready before other sandbox operations",
+                "tradeoff": "Quick check of Docker and stack detection."
+            },
+            "check_syntax": {
+                "description": "Lint a single file inside the Docker sandbox using the stack's native linter.",
+                "params": {"file": "string (required, relative path)"},
+                "token_cost": "~100-300 tokens",
+                "use_when": "Linting a file, finding syntax errors",
+                "tradeoff": "Returns structured errors only — never raw linter output."
+            },
+            "compile_project": {
+                "description": "Compile the entire project inside the Docker sandbox.",
+                "params": {},
+                "token_cost": "~100-300 tokens",
+                "use_when": "Full project compilation check",
+                "tradeoff": "Returns structured errors with file, line, column, and message."
+            },
+            "run_tests": {
+                "description": "Run the project's test suite inside the Docker sandbox.",
+                "params": {"test_path": "string (optional, relative path to specific test file or dir)"},
+                "token_cost": "~150-400 tokens",
+                "use_when": "Running tests, checking test results",
+                "tradeoff": "Returns structured summary: total, passed, failed, and failure details."
+            },
+            "install_deps": {
+                "description": "Reinstall all dependencies (system packages + project deps) inside the Docker sandbox.",
+                "params": {},
+                "token_cost": "~100-200 tokens",
+                "use_when": "When deps are stale or container was rebuilt",
+                "tradeoff": "Call setup_sandbox() first if not already done."
+            },
+            "stop_sandbox": {
+                "description": "Stop and remove a specific sandbox container.",
+                "params": {"stack": "string (required, python|node|java-maven|java-gradle|go|rust|ruby|php|cpp)"},
+                "token_cost": "~50-100 tokens",
+                "use_when": "Cleaning up sandbox containers",
+                "tradeoff": "Permanently removes the container."
             }
         }
     },
