@@ -173,16 +173,28 @@ local-daemon-tool/
 
 ## MCP Tools Reference
 
+### Currently Tested & Working (12 tools)
+
 | Category | Tools |
 |:---------|:------|
-| **Search** | `search_code`, `search_symbol`, `find_file`, `search_usages` |
-| **Semantic** | `semantic_search`, `find_similar_functions`, `toggle_embeddings`, `embedding_status` |
-| **AST** | `extract_function`, `extract_class`, `extract_by_name`, `get_signature`, `get_body` |
-| **Intelligence** | `get_index`, `get_overview`, `get_callers`, `get_callees`, `trace_execution`, `trace_endpoint_flow` |
+| **Search** | `search_symbol`, `semantic_search` |
+| **AST** | `extract_function`, `extract_class` |
+| **Intelligence** | `get_overview`, `get_callers`, `get_callees` |
 | **Dependencies** | `get_imports`, `get_importers`, `get_file_deps` |
+| **Analysis** | `get_edit_context` |
+| **Utility** | `ping` |
+
+### Upcoming (vNext) — Not Yet Exposed via MCP (14 tools)
+
+| Category | Tools |
+|:---------|:------|
+| **Search** | `search_code`, `find_file`, `search_usages` |
+| **Semantic** | `find_similar_functions`, `toggle_embeddings`, `embedding_status` |
+| **AST** | `extract_by_name`, `get_signature`, `get_body` |
+| **Intelligence** | `get_index`, `trace_execution`, `trace_endpoint_flow` |
 | **Analysis** | `get_type_info`, `get_defined_symbols`, `count_references`, `impact_analysis`, `get_blast_radius`, `get_error_context` |
-| **Editing** | `preview_smart_edit`, `apply_smart_edit`, `get_edit_context` |
-| **Utility** | `ping`, `get_tools_docs`, `detect_snippet`, `parse_blocks`, `read_file`, `list_workspace` |
+| **Editing** | `preview_smart_edit`, `apply_smart_edit` |
+| **Utility** | `get_tools_docs`, `detect_snippet`, `parse_blocks`, `read_file`, `list_workspace` |
 
 See `AGENT_MANUAL.md` for detailed usage and token costs.
 
