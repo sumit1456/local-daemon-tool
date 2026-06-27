@@ -9,8 +9,8 @@ Local-first developer tool that acts as an intelligent repository engine for hum
 - **AST Extraction** — Extract functions, classes, signatures via tree-sitter
 - **Call Graph** — Get callers, callees, impact analysis, execution tracing
 - **Dependency Analysis** — Imports, importers, file dependencies
-- **Safe Code Editing** — Preview diffs before applying, auto git commit, undo support
-- **MCP Server** — Full tool suite for AI agents
+- **Safe Code Editing** — Smart block-based editing with auto git commit
+- **MCP Server** — Tool suite for AI agents (search, analysis, semantic, editing)
 - **CLI Interface** — `ce_cli.py` for agent use via run_command
 - **Web UI** — Desktop app with pywebview, browser also works
 
@@ -83,40 +83,55 @@ ce_cli.py file "*.py"
 ce_cli.py function "path/to/file.py" "FunctionName"
 ce_cli.py class "path/to/file.py" "ClassName"
 ce_cli.py signature "path/to/file.py" 42 89
-
-# Semantic search
-ce_cli.py toggle-embeddings true
-ce_cli.py semantic-search "handle user authentication"
-ce_cli.py find-similar "search_code"
+ce_cli.py body "path/to/file.py" 42 89
 
 # Analysis
 ce_cli.py index
+ce_cli.py overview
 ce_cli.py callers "function_name"
-ce_cli.py impact "function_name"
-ce_cli.py trace "function_name"
+ce_cli.py callees "function_name"
+
+# Code analysis
+ce_cli.py detect "code_snippet"
+ce_cli.py parse-blocks "code_snippet"
 
 # Editing
-ce_cli.py preview "file.py" "old code" "new code"
-ce_cli.py apply "edit_id"
-ce_cli.py undo
+ce_cli.py preview-smart "file.py" "new code"
+ce_cli.py apply-smart "edit_id"
 ```
 
 Full list: `ce_cli.py --help`
 
 ### MCP Server
 
-Configure in your MCP client:
+#### For OpenCode
+Configure in OpenCode's MCP settings:
 ```json
 {
   "mcpServers": {
     "CodeSearchEngine": {
-      "command": ".venv-mcp\\Scripts\\python.exe",
-      "args": ["mcp_server.py"],
-      "cwd": "C:\\path\\to\\local-daemon-tool"
+      "command": "C:\\path\\to\\local-daemon-tool\\.venv-mcp\\Scripts\\python.exe",
+      "args": ["C:\\path\\to\\local-daemon-tool\\mcp_server.py"]
     }
   }
 }
 ```
+
+#### For Claude Desktop
+Configure in your `claude_desktop_config.json`:
+```json
+{
+  "mcpServers": {
+    "CodeSearchEngine": {
+      "command": "C:\\path\\to\\local-daemon-tool\\.venv-mcp\\Scripts\\python.exe",
+      "args": ["C:\\path\\to\\local-daemon-tool\\mcp_server.py"]
+    }
+  }
+}
+```
+
+#### For Antigravity (Gemini IDE)
+Antigravity automatically discovers MCP tools by placing tool schemas (`<toolName>.json`) inside the `~/.gemini/antigravity-ide/mcp/CodeSearchEngine/` directory.
 
 Or get tool docs via API:
 ```bash
@@ -160,14 +175,14 @@ local-daemon-tool/
 
 | Category | Tools |
 |:---------|:------|
-| **Search** | `search_code`, `search_symbol`, `find_file` |
+| **Search** | `search_code`, `search_symbol`, `find_file`, `search_usages` |
 | **Semantic** | `semantic_search`, `find_similar_functions`, `toggle_embeddings`, `embedding_status` |
-| **AST** | `extract_function`, `extract_class`, `get_signature`, `get_body` |
-| **Intelligence** | `get_index`, `get_overview`, `get_callers`, `get_callees` |
+| **AST** | `extract_function`, `extract_class`, `extract_by_name`, `get_signature`, `get_body` |
+| **Intelligence** | `get_index`, `get_overview`, `get_callers`, `get_callees`, `trace_execution`, `trace_endpoint_flow` |
 | **Dependencies** | `get_imports`, `get_importers`, `get_file_deps` |
-| **Analysis** | `get_type_info`, `get_defined_symbols`, `count_references`, `impact_analysis`, `trace_execution` |
-| **Editing** | `preview_edit`, `apply_edit`, `preview_smart_edit`, `apply_smart_edit`, `undo_edit`, `get_edit_context` |
-| **Utility** | `ping`, `get_tools_docs`, `detect_snippet`, `parse_blocks` |
+| **Analysis** | `get_type_info`, `get_defined_symbols`, `count_references`, `impact_analysis`, `get_blast_radius`, `get_error_context` |
+| **Editing** | `preview_smart_edit`, `apply_smart_edit`, `get_edit_context` |
+| **Utility** | `ping`, `get_tools_docs`, `detect_snippet`, `parse_blocks`, `read_file`, `list_workspace` |
 
 See `AGENT_MANUAL.md` for detailed usage and token costs.
 
@@ -182,7 +197,7 @@ Use native tools when possible — they're faster and cheaper:
 | Read file | Native `read` | Direct, no overhead |
 | Extract function | MCP `extract_function` | AST parsing, only returns function |
 | Semantic search | MCP `semantic_search` | Embedding-based meaning search |
-| Safe editing | MCP `preview_edit` + `apply_edit` | Auto git commit, undo support |
+| Safe editing | MCP `preview_smart_edit` + `apply_smart_edit` | Auto git commit |
 
 ## License
 

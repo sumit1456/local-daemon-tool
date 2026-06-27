@@ -1,0 +1,86 @@
+MCP CodeEngine — Broken Tools & Issues Report
+Tested: 2026-06-25
+
+========================================
+1. preview_smart_edit — BROKEN (500 Internal Server Error)
+========================================
+Tool: preview_smart_edit
+Endpoint: POST http://127.0.0.1:8000/preview-smart-edit
+Error: Server error '500 Internal Server Error'
+File tested: src/main/java/com/assignment/gamebackend/player/service/PlayerService.java
+Input: Valid new_code block (minor formatting change)
+Impact: Cannot preview or apply smart edits. Entire editing workflow is broken.
+
+========================================
+2. get_signature — Returns Empty
+========================================
+Tool: get_signature
+Input: file=src/main/java/com/assignment/gamebackend/player/service/PlayerService.java, line_start=1, line_end=30
+Result: signature="" (empty string), body=null
+Expected: Function signature and docstring for lines 1-30
+Impact: Cannot cheaply get function signatures. Users must fall back to extract_function or full file read.
+
+========================================
+3. search_code — Returns 0 Results for Valid Query
+========================================
+Tool: search_code
+Input: query="createPlayer", limit=10
+Result: total=0, matches=[]
+Verified: "createPlayer" exists in PlayerService.java:30 and PlayerController.java:26,27 (confirmed via native grep)
+Cause: Likely path mismatch — index uses relative paths (src/...) but search_code may be searching different root
+Impact: Cannot rely on search_code for text search. Native grep must be used instead.
+
+========================================
+4. trace_execution — Returns Empty Flow
+========================================
+Tool: trace_execution
+Input: symbol_name="registerPlayer", max_depth=5
+Result: flow=[] (empty array)
+Expected: Call chain showing PlayerController -> PlayerService -> PlayerMapper, PlayerRepository, etc.
+Impact: Cannot trace execution flow. Users must manually follow callers/callees.
+
+========================================
+5. get_blast_radius — Returns Empty
+========================================
+Tool: get_blast_radius
+Input: symbol_name="PlayerService"
+Result: total_affected=0, callers_by_depth={}
+Expected: All functions that transitively call PlayerService methods
+Impact: Cannot assess blast radius before refactoring. get_callers works at depth-1 but not transitive.
+
+========================================
+6. count_references — Returns 0 for Used Symbols
+========================================
+Tool: count_references
+Input: symbol_name="PlayerService"
+Result: references=0
+Verified: PlayerService is imported/used in 7+ files (confirmed via get_importers)
+Impact: Cannot use for risk assessment. Misleading zero count for widely-used symbols.
+
+========================================
+7. get_defined_symbols — Only Works on Indexed Language
+========================================
+Tool: get_defined_symbols
+Input: file=mcp_server.py
+Result: functions=[], classes=[], methods=[], constants=[] (empty)
+Cause: Index only covers Java files (src/). Root-level Python files are not indexed.
+Impact: Limited to Java-only codebases. Python/shell scripts in root are invisible.
+
+========================================
+8. find_file — Returns Empty
+========================================
+Tool: find_file
+Input: pattern="*.py"
+Result: empty output
+Cause: Same as #7 — index only has Java files. Native glob works fine for all files.
+Impact: Cannot use MCP for file discovery outside indexed language scope.
+
+========================================
+RECOMMENDATIONS
+========================================
+- Fix preview_smart_edit: Most critical, blocks the edit workflow
+- Fix search_code: Path resolution between index and search needs alignment
+- Fix count_references: Should count cross-file usages (imports, type refs, calls)
+- Fix trace_execution / get_blast_radius: Precomputed call graph appears incomplete
+- Fix get_signature: Line range parsing issue causing empty returns
+- get_defined_symbols / find_file: Document that these are scoped to indexed language only

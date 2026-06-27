@@ -643,6 +643,7 @@ input, select, textarea { font-family: inherit; }
   border-bottom: 1px solid var(--border-subtle);
 }
 #sandbox-status-text { font-size: 13px; color: var(--text-secondary); }
+#sandbox-container-status { font-size: 12px; transition: color 0.3s; }
 .build-grid {
   display: grid; grid-template-columns: repeat(3, 1fr);
   gap: 14px; padding: 16px 24px;
@@ -1192,4 +1193,58 @@ input, select, textarea { font-family: inherit; }
 .summary-stat .stat-label {
   font-size: 11px; color: var(--text-muted); text-transform: uppercase;
   letter-spacing: 0.06em;
+}
+
+/* ═══════════════════ TERMINAL ═══════════════════ */
+.terminal-wrap {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  background: #000;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border-mid);
+  margin: 0 16px 16px;
+}
+
+#xterm-container {
+  flex: 1;
+  padding: 8px;
+  overflow: hidden;
+}
+
+/* xterm overrides */
+#xterm-container .xterm {
+  height: 100%;
+}
+#xterm-container .xterm-viewport {
+  overflow-y: auto !important;
+}
+#xterm-container .xterm-viewport::-webkit-scrollbar {
+  width: 6px;
+}
+#xterm-container .xterm-viewport::-webkit-scrollbar-thumb {
+  background: rgba(255,255,255,0.15);
+  border-radius: 99px;
+}
+
+#page-terminal {
+  display: none;
+  flex-direction: column;
+  flex: 1;
+  overflow: hidden;
+}
+#page-terminal.active {
+  display: flex;
+}
+
+/* Terminal mode toggle */
+#terminal-mode-toggle .mode-btn {
+  font-size: 11px;
+  padding: 4px 10px;
+}
+
+/* Terminal toolbar label */
+#terminal-mode-label {
+  font-family: var(--font-mono);
 }

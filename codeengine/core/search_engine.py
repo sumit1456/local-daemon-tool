@@ -1574,6 +1574,36 @@ class EditContext:
     imports: list[str]
 
 
+def _parse_symbol_entry(entry: str) -> dict:
+    """Parse compact symbol string 'name:kind:file:line_start-line_end' into a dict."""
+    # Format: name:kind_char:file:line_start-line_end
+    # file path can contain colons (e.g. Windows drives), so split from the right
+    parts = entry.rsplit(":", 2)
+    if len(parts) != 3:
+        raise ValueError(f"Invalid symbol entry format: {entry}")
+    name_kind = parts[0]  # "name:kind_char"
+    file_path = parts[1]   # "path/to/file.py"
+    line_range = parts[2]  # "228-314"
+
+    name_parts = name_kind.split(":", 1)
+    if len(name_parts) != 2:
+        raise ValueError(f"Invalid symbol entry format: {entry}")
+    name = name_parts[0]
+    kind_char = name_parts[1]
+
+    kind_map = {"f": "function", "c": "class", "m": "method", "i": "interface"}
+    kind = kind_map.get(kind_char, kind_char)
+
+    line_start_str, line_end_str = line_range.split("-")
+    return {
+        "name": name,
+        "kind": kind,
+        "file": file_path,
+        "line_start": int(line_start_str),
+        "line_end": int(line_end_str),
+    }
+
+
 async def get_edit_context(
     symbol_name: str,
     file: str | None = None,
@@ -1595,9 +1625,12 @@ async def get_edit_context(
         package_filter=package_filter,
     )
 
+    # Parse compact strings into dicts
+    parsed = [_parse_symbol_entry(s) for s in matching_symbols]
+
     # Filter to exact name matches first to avoid prefix/substring matches if an exact match exists
-    exact_matches = [s for s in matching_symbols if s.name == symbol_name]
-    candidates = exact_matches if exact_matches else matching_symbols
+    exact_matches = [s for s in parsed if s["name"] == symbol_name]
+    candidates = exact_matches if exact_matches else parsed
 
     if not candidates:
         raise ValueError(f"Symbol '{symbol_name}' not found with the specified filters.")
@@ -1606,16 +1639,16 @@ async def get_edit_context(
         # Return candidates to let the client disambiguate
         return [
             {
-                "file": c.file,
-                "kind": c.kind,
-                "line_start": c.line_start,
-                "line_end": c.line_end,
+                "file": c["file"],
+                "kind": c["kind"],
+                "line_start": c["line_start"],
+                "line_end": c["line_end"],
             }
             for c in candidates
         ]
 
     target = candidates[0]
-    target_file = target.file
+    target_file = target["file"]
     repo_root = Path(os.getenv("REPO_PATH", ".")).resolve()
     resolved_file = str((repo_root / target_file).resolve())
 
@@ -1623,14 +1656,14 @@ async def get_edit_context(
     total_lines = await asyncio.to_thread(_count_file_lines, resolved_file)
 
     # 2. Read actual source lines of the symbol
-    source_lines = await asyncio.to_thread(_read_lines, resolved_file, target.line_start, target.line_end)
+    source_lines = await asyncio.to_thread(_read_lines, resolved_file, target["line_start"], target["line_end"])
     source = "\n".join(source_lines)
 
     # 3. Read preamble (decorators/comments up to 3 lines above start line)
     preamble = ""
-    if target.line_start > 1:
-        preamble_start = max(1, target.line_start - 3)
-        preamble_end = target.line_start - 1
+    if target["line_start"] > 1:
+        preamble_start = max(1, target["line_start"] - 3)
+        preamble_end = target["line_start"] - 1
         preamble_lines = await asyncio.to_thread(_read_lines, resolved_file, preamble_start, preamble_end)
         preamble = "\n".join(preamble_lines)
 
@@ -1648,17 +1681,16 @@ async def get_edit_context(
     # 7. File imports
     try:
         imports_data = await get_file_imports(target_file)
-        # Reconstruct simple import strings or return module names
         imports = [imp.module for imp in imports_data.imports]
     except Exception:
         imports = []
 
     return EditContext(
         file=target_file,
-        symbol_name=target.name,
-        kind=target.kind,
-        line_start=target.line_start,
-        line_end=target.line_end,
+        symbol_name=target["name"],
+        kind=target["kind"],
+        line_start=target["line_start"],
+        line_end=target["line_end"],
         total_file_lines=total_lines,
         preamble=preamble,
         source=source,

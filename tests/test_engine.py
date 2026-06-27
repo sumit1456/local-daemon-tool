@@ -92,7 +92,7 @@ async def test_indexing_and_search(temp_repo):
     # Test symbol search
     symbols = await search_symbol("hello", None)
     assert len(symbols) == 1
-    assert symbols[0].name == "hello_world"
+    assert symbols[0] == "hello_world:f:test_file.py:3-5"
     
     # Test code search via ripgrep
     matches = await search_code("print", temp_repo, "python", 10)

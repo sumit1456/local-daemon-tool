@@ -514,6 +514,40 @@ def cmd_parse_blocks(args) -> None:
     _out(data)
 
 
+def cmd_imports(args) -> None:
+    """Get all imports used by a file."""
+    data = _get("/search/imports", file=args.file)
+    _out(data)
+
+
+def cmd_importers(args) -> None:
+    """Find all files that import a given module."""
+    data = _get("/search/importers", module=args.module)
+    _out(data)
+
+
+def cmd_file_deps(args) -> None:
+    """Get complete dependency picture for a file — both directions."""
+    data = _get("/search/file-deps", file=args.file)
+    _out(data)
+
+
+def cmd_edit_context(args) -> None:
+    """Get all structured context required to edit a symbol."""
+    data = _get("/search/edit-context",
+                symbol=args.symbol,
+                file=args.file,
+                dir=args.dir,
+                package=args.package)
+    _out(data)
+
+
+def cmd_semantic(args) -> None:
+    """Find code by natural language description using embeddings."""
+    data = _get("/search/semantic", q=args.query, limit=args.limit)
+    _out(data)
+
+
 # ── Argument parser ───────────────────────────────────────────────────────────
 
 def build_parser() -> argparse.ArgumentParser:
@@ -526,100 +560,75 @@ def build_parser() -> argparse.ArgumentParser:
     # ping
     sub.add_parser("ping", help="Check if the service is running")
 
-    # search
-    s = sub.add_parser("search", help="Search code with ripgrep")
-    s.add_argument("query",               help="Search pattern or text")
-    s.add_argument("--path",  default=".", help="Root directory (default: .)")
-    s.add_argument("--lang",  default=None,
-                   help="Language filter: python|javascript|typescript|java|go|rust")
-    s.add_argument("--limit", type=int, default=50, help="Max results (default: 50)")
+    # symbol / search_symbol
+    for cmd in ["symbol", "search_symbol"]:
+        s = sub.add_parser(cmd, help="Search AST symbol index")
+        s.add_argument("name",               help="Symbol name (partial match)")
+        s.add_argument("--kind", default=None, help="Kind filter: function|class|method|interface")
+        s.add_argument("--dir", default=None, help="Directory prefix filter")
+        s.add_argument("--package", default=None, help="Package path filter")
 
-    # symbol
-    s = sub.add_parser("symbol", help="Search AST symbol index")
-    s.add_argument("name",               help="Symbol name (partial match)")
-    s.add_argument("--kind", default=None,
-                   help="Kind filter: function|class|method|interface")
+    # overview / get_overview
+    for cmd in ["overview", "get_overview"]:
+        s = sub.add_parser(cmd, help="Full repo overview: symbols + call graph")
+        s.add_argument("--files", nargs="*", default=None, metavar="FILE", help="Scope to specific files")
+        s.add_argument("--dir", default=None, help="Directory prefix filter")
+        s.add_argument("--package", default=None, help="Package path filter")
 
-    # file
-    s = sub.add_parser("file", help="Find files by name pattern (fd)")
-    s.add_argument("pattern",             help="Filename pattern")
-    s.add_argument("--root", default=".", help="Root directory (default: .)")
+    # class / extract_class
+    for cmd in ["class", "extract_class"]:
+        s = sub.add_parser(cmd, help="Extract class source (tree-sitter)")
+        s.add_argument("file", help="Relative file path")
+        s.add_argument("name", help="Exact class name")
 
-    # function
-    s = sub.add_parser("function", help="Extract function source (tree-sitter)")
-    s.add_argument("file", help="Relative file path (e.g. codeengine/app.py)")
-    s.add_argument("name", help="Exact function name")
+    # function / extract_function
+    for cmd in ["function", "extract_function"]:
+        s = sub.add_parser(cmd, help="Extract function source (tree-sitter)")
+        s.add_argument("file", help="Relative file path (e.g. codeengine/app.py)")
+        s.add_argument("name", help="Exact function name")
 
-    # class
-    s = sub.add_parser("class", help="Extract class source (tree-sitter)")
-    s.add_argument("file", help="Relative file path")
-    s.add_argument("name", help="Exact class name")
+    # imports / get_imports
+    for cmd in ["imports", "get_imports"]:
+        s = sub.add_parser(cmd, help="Get all imports used by a file")
+        s.add_argument("file", help="Relative file path")
 
-    # preview-edit
-    s = sub.add_parser("preview", help="Preview a code edit (unified diff)")
-    s.add_argument("file",     help="Relative file path")
-    s.add_argument("old_code", help="Exact code block to replace")
-    s.add_argument("new_code", help="Replacement code")
+    # callers / get_callers
+    for cmd in ["callers", "get_callers"]:
+        s = sub.add_parser(cmd, help="Who calls a given symbol?")
+        s.add_argument("symbol_name", help="Exact symbol name")
+        s.add_argument("--dir", default=None, help="Directory filter")
+        s.add_argument("--package", default=None, help="Package filter")
 
-    # apply-edit
-    s = sub.add_parser("apply", help="Apply a previewed edit + git commit")
-    s.add_argument("edit_id", help="edit_id from the preview response")
+    # callees / get_callees
+    for cmd in ["callees", "get_callees"]:
+        s = sub.add_parser(cmd, help="What does a symbol call internally?")
+        s.add_argument("symbol_name", help="Exact symbol name")
+        s.add_argument("--dir", default=None, help="Directory filter")
+        s.add_argument("--package", default=None, help="Package filter")
 
-    # undo
-    sub.add_parser("undo", help="Revert last applied edit (git revert HEAD)")
+    # importers / get_importers
+    for cmd in ["importers", "get_importers"]:
+        s = sub.add_parser(cmd, help="Find all files that import a given module")
+        s.add_argument("module", help="Module name (e.g. utils.auth)")
 
-    # index
-    s = sub.add_parser("index", help="Get file + symbol index (no file reads)")
-    s.add_argument("--files", nargs="*", default=None,
-                   metavar="FILE",
-                   help="Scope to specific files (omit for full repo)")
+    # file_deps / get_file_deps
+    for cmd in ["file_deps", "get_file_deps"]:
+        s = sub.add_parser(cmd, help="Get complete dependency picture for a file")
+        s.add_argument("file", help="Relative file path")
 
-    # overview
-    s = sub.add_parser("overview", help="Full repo overview: symbols + call graph")
-    s.add_argument("--files", nargs="*", default=None,
-                   metavar="FILE",
-                   help="Scope to specific files (omit for full repo)")
+    # edit_context / get_edit_context
+    for cmd in ["edit_context", "get_edit_context"]:
+        s = sub.add_parser(cmd, help="Get all structured context required to edit a symbol")
+        s.add_argument("symbol", help="Name of symbol to edit")
+        s.add_argument("--file", default=None, help="Optional relative file path filter")
+        s.add_argument("--dir", default=None, help="Optional directory prefix filter")
+        s.add_argument("--package", default=None, help="Optional package path filter")
 
-    # callers
-    s = sub.add_parser("callers", help="Who calls a given symbol?")
-    s.add_argument("symbol_name", help="Exact symbol name")
-
-    # callees
-    s = sub.add_parser("callees", help="What does a symbol call internally?")
-    s.add_argument("symbol_name", help="Exact symbol name")
-
-    # signature
-    s = sub.add_parser("signature", help="Get function signature + docstring only")
-    s.add_argument("file",       help="Relative file path")
-    s.add_argument("line_start", type=int, help="First line of the function")
-    s.add_argument("line_end",   type=int, help="Last line of the function")
-
-    # body
-    s = sub.add_parser("body", help="Get full function body (exact lines, no noise)")
-    s.add_argument("file",       help="Relative file path")
-    s.add_argument("line_start", type=int, help="First line of the function")
-    s.add_argument("line_end",   type=int, help="Last line of the function")
-
-    # detect
-    s = sub.add_parser("detect", help="Detect original source block of a code snippet")
-    s.add_argument("code", help="Code snippet")
-    s.add_argument("--file_hint", default=None, help="Optional file path hint")
-    s.add_argument("--lang_hint", default=None, help="Optional language hint")
-
-    # preview-smart
-    s = sub.add_parser("preview-smart", help="Preview a smart block-based code edit")
-    s.add_argument("file", help="Relative file path")
-    s.add_argument("new_code", help="New code blocks to apply")
-
-    # apply-smart
-    s = sub.add_parser("apply-smart", help="Apply a smart edit preview")
-    s.add_argument("edit_id", help="edit_id from the preview-smart response")
-
-    # parse-blocks
-    s = sub.add_parser("parse-blocks", help="Parse pasted code into top-level blocks")
-    s.add_argument("code", help="Code snippet")
-    s.add_argument("--file_hint", default=None, help="Optional file path hint")
-    s.add_argument("--lang_hint", default=None, help="Optional language hint")
+    # semantic / semantic_search
+    for cmd in ["semantic", "semantic_search"]:
+        s = sub.add_parser(cmd, help="Find code by natural language description using embeddings")
+        s.add_argument("query", help="Natural language description")
+        s.add_argument("--limit", type=int, default=10, help="Max results (default: 10)")
 
     return p
 
@@ -627,25 +636,29 @@ def build_parser() -> argparse.ArgumentParser:
 # ── Entry point ───────────────────────────────────────────────────────────────
 
 HANDLERS = {
-    "ping":      cmd_ping,
-    "search":    cmd_search,
-    "symbol":    cmd_symbol,
-    "file":      cmd_file,
-    "function":  cmd_function,
-    "class":     cmd_class,
-    "preview":   cmd_preview,
-    "apply":     cmd_apply,
-    "undo":      cmd_undo,
-    "index":     cmd_index,
-    "overview":  cmd_overview,
-    "callers":   cmd_callers,
-    "callees":   cmd_callees,
-    "signature": cmd_signature,
-    "body":      cmd_body,
-    "detect":        cmd_detect,
-    "preview-smart": cmd_preview_smart,
-    "apply-smart":   cmd_apply_smart,
-    "parse-blocks":  cmd_parse_blocks,
+    "ping":             cmd_ping,
+    "symbol":           cmd_symbol,
+    "search_symbol":    cmd_symbol,
+    "overview":         cmd_overview,
+    "get_overview":     cmd_overview,
+    "class":            cmd_class,
+    "extract_class":    cmd_class,
+    "function":         cmd_function,
+    "extract_function": cmd_function,
+    "imports":          cmd_imports,
+    "get_imports":      cmd_imports,
+    "callers":          cmd_callers,
+    "get_callers":      cmd_callers,
+    "callees":          cmd_callees,
+    "get_callees":      cmd_callees,
+    "importers":        cmd_importers,
+    "get_importers":    cmd_importers,
+    "file_deps":        cmd_file_deps,
+    "get_file_deps":    cmd_file_deps,
+    "edit_context":     cmd_edit_context,
+    "get_edit_context": cmd_edit_context,
+    "semantic":         cmd_semantic,
+    "semantic_search":  cmd_semantic,
 }
 
 if __name__ == "__main__":

@@ -1,4 +1,4 @@
-const BASE = 'http://localhost:8000';
+const BASE = window.location.origin;
 
 async function api(path, opts = {}) {
   const r = await fetch(BASE + path, {
@@ -232,10 +232,19 @@ function attachAutocomplete(input, opts = {}) {
         if (query.length < 2) return [];
         const params = new URLSearchParams({ name: query });
         const data = await fetch(`${BASE}/search/symbol?${params}`).then(r => r.json());
-        items = (Array.isArray(data) ? data : []).map(s => ({
-          value: s.name, kind: s.kind, file: s.file,
-          line_start: s.line_start, line_end: s.line_end
-        }));
+        // Parse compact format: "name:kind:file:line_start-line_end"
+        items = (Array.isArray(data) ? data : []).map(s => {
+          const parts = s.split(':');
+          const name = parts[0];
+          const kindChar = parts[1];
+          const file = parts.slice(2, -1).join(':');
+          const lines = parts[parts.length - 1].split('-');
+          const kindMap = { f: 'function', c: 'class', m: 'method', i: 'interface' };
+          return {
+            value: name, kind: kindMap[kindChar] || kindChar, file: file,
+            line_start: parseInt(lines[0]), line_end: parseInt(lines[1])
+          };
+        });
       } else if (type === 'dir' || type === 'package') {
         // Derive dirs/packages from all files in the repo (cache the file list to avoid redundant requests)
         const repo = getRepo();
@@ -330,7 +339,7 @@ function attachAutocomplete(input, opts = {}) {
 /* ── Attach autocomplete to all relevant inputs ── */
 function initAllAutocompletes() {
   const FILE_INPUTS = [
-    { id: 'edit-file',  type: 'file' },
+    // { id: 'edit-file',  type: 'file' },
     { id: 'fe-file',    type: 'file' },
     { id: 'ig-file',    type: 'file' },
     { id: 'ff-pattern', type: 'file' },
@@ -342,9 +351,10 @@ function initAllAutocompletes() {
     { id: 'cg-symbol',  type: 'symbol' },
     { id: 'ia-symbol',  type: 'symbol' },
     { id: 'te-symbol',  type: 'symbol' },
-    { id: 'fh-symbol',  type: 'symbol' },
+    // { id: 'fh-symbol',  type: 'symbol' },
     { id: 'sf-symbol',  type: 'symbol' },
     { id: 'ref-symbol', type: 'symbol' },
+    { id: 'fe-name',    type: 'symbol' },
   ];
   const DIR_INPUTS = [
     { id: 'idx-dir',    type: 'dir' },
@@ -365,10 +375,12 @@ function initAllAutocompletes() {
       multi: cfg.multi || false,
       onSelect: (val, item) => {
         // Extra side effects per input
+        /*
         if (cfg.id === 'edit-file') {
           const ext = val.split('.').pop().toLowerCase();
           setEditorLang(ext);
         }
+        */
         if (cfg.id === 'fe-file') {
           const feLineStart = document.getElementById('fe-line-start');
           const feLineEnd   = document.getElementById('fe-line-end');
@@ -626,13 +638,23 @@ async function runSymbolSearch() {
 
     let html = `<div class="stats-bar"><span class="stats-badge">🔣 ${data.length} symbol${data.length!==1?'s':''}</span></div>`;
     data.forEach(s => {
-      const kindClass = { function:'kind-function', class:'kind-class', method:'kind-method', interface:'kind-interface' }[s.kind] || 'kind-default';
+      // Parse compact format: "name:kind:file:line_start-line_end"
+      const parts = s.split(':');
+      const name = parts[0];
+      const kindChar = parts[1];
+      const file = parts.slice(2, -1).join(':'); // handle colons in file paths
+      const lines = parts[parts.length - 1].split('-');
+      const lineStart = parseInt(lines[0]);
+      const lineEnd = parseInt(lines[1]);
+      const kindMap = { f: 'function', c: 'class', m: 'method', i: 'interface' };
+      const kind = kindMap[kindChar] || kindChar;
+      const kindClass = { function:'kind-function', class:'kind-class', method:'kind-method', interface:'kind-interface' }[kind] || 'kind-default';
       html += `
-        <div class="symbol-card" onclick="fillExtract('${escHtml(s.file)}',${s.line_start},${s.line_end})">
-          <span class="symbol-kind ${kindClass}">${s.kind}</span>
-          <span class="symbol-name">${escHtml(s.name)}</span>
-          <span class="symbol-file">${escHtml(s.file)}</span>
-          <span class="symbol-lines">L${s.line_start}–${s.line_end}</span>
+        <div class="symbol-card" onclick="fillExtract('${escHtml(file)}',${lineStart},${lineEnd})">
+          <span class="symbol-kind ${kindClass}">${kind}</span>
+          <span class="symbol-name">${escHtml(name)}</span>
+          <span class="symbol-file">${escHtml(file)}</span>
+          <span class="symbol-lines">L${lineStart}–${lineEnd}</span>
         </div>`;
     });
     ssResults.innerHTML = html;
@@ -651,6 +673,7 @@ async function loadSymbolSource(file, name, kind) {
       data = await api(`/search/function?${new URLSearchParams({file,name})}`);
     }
     
+    /*
     // Autofill Code Editor fields
     const filePath = data.file || file;
     document.getElementById('edit-file').value = filePath;
@@ -665,6 +688,7 @@ async function loadSymbolSource(file, name, kind) {
     setTimeout(() => { cmOld.refresh(); cmNew.refresh(); }, 50);
 
     toast(`Loaded ${name} into Code Editor`, 'success');
+    */
   } catch(e) {
     toast('Cannot load source: ' + e.message, 'error');
   }
@@ -784,9 +808,11 @@ async function loadFunctionExtractFiles() {
   } catch (_) {}
 }
 
-/* ═══════════════════════════════════════════════════════════
+/*
+═══════════════════════════════════════════════════════════
    EDIT — CodeMirror editors
-═══════════════════════════════════════════════════════════ */
+═══════════════════════════════════════════════════════════
+/*
 let currentEditId = null;
 let _lastDiffText = '';
 
@@ -794,7 +820,6 @@ const editStatus  = document.getElementById('edit-status');
 const editApplyBtn = document.getElementById('edit-apply-btn');
 const editDiff    = document.getElementById('edit-diff');
 
-/* ── CM mode map ── */
 const EXT_TO_CM_MODE = {
   py: 'python', js: 'javascript', ts: { name: 'javascript', typescript: true },
   java: 'text/x-java', go: 'go', rs: 'rust',
@@ -818,188 +843,162 @@ const CM_OPTS = {
   styleActiveLine: true,
 };
 
-/* Initialise both editors */
-const cmOld = CodeMirror.fromTextArea(document.getElementById('edit-old'), { ...CM_OPTS, mode: 'plaintext' });
-const cmNew = CodeMirror.fromTextArea(document.getElementById('edit-new'), { ...CM_OPTS, mode: 'plaintext' });
+const _editOldEl = document.getElementById('edit-old');
+const _editNewEl = document.getElementById('edit-new');
+let cmOld = null, cmNew = null;
 
-/* Make editors fill pane height */
-cmOld.setSize('100%', '100%');
-cmNew.setSize('100%', '100%');
+if (_editOldEl && _editNewEl) {
+  cmOld = CodeMirror.fromTextArea(_editOldEl, { ...CM_OPTS, mode: 'plaintext' });
+  cmNew = CodeMirror.fromTextArea(_editNewEl, { ...CM_OPTS, mode: 'plaintext' });
+  cmOld.setSize('100%', '100%');
+  cmNew.setSize('100%', '100%');
 
-function setEditorLang(ext) {
-  const mode  = EXT_TO_CM_MODE[ext] || 'plaintext';
-  const label = EXT_TO_LABEL[ext]   || 'Plain';
-  cmOld.setOption('mode', mode);
-  cmNew.setOption('mode', mode);
-  document.getElementById('old-lang-badge').textContent = label;
-  document.getElementById('new-lang-badge').textContent = label;
-}
+  function setEditorLang(ext) {
+    const mode  = EXT_TO_CM_MODE[ext] || 'plaintext';
+    const label = EXT_TO_LABEL[ext]   || 'Plain';
+    cmOld.setOption('mode', mode);
+    cmNew.setOption('mode', mode);
+    document.getElementById('old-lang-badge').textContent = label;
+    document.getElementById('new-lang-badge').textContent = label;
+  }
 
-/* Watch file path input → update editor language */
-document.getElementById('edit-file').addEventListener('input', () => {
-  const file = document.getElementById('edit-file').value.trim();
-  const ext  = file.split('.').pop().toLowerCase();
-  setEditorLang(ext);
-});
-
-/* ── Copy buttons ── */
-function makeCopyBtn(btnId, getContent) {
-  document.getElementById(btnId).addEventListener('click', () => {
-    const text = getContent();
-    if (!text) return;
-    navigator.clipboard.writeText(text).then(() => {
-      const btn = document.getElementById(btnId);
-      btn.textContent = '✓ Copied';
-      btn.classList.add('copied');
-      setTimeout(() => { btn.textContent = '⎘ Copy'; btn.classList.remove('copied'); }, 1800);
-    }).catch(() => toast('Copy failed', 'error'));
+  document.getElementById('edit-file').addEventListener('input', () => {
+    const file = document.getElementById('edit-file').value.trim();
+    const ext  = file.split('.').pop().toLowerCase();
+    setEditorLang(ext);
   });
-}
-makeCopyBtn('old-copy-btn', () => cmOld.getValue());
-makeCopyBtn('new-copy-btn', () => cmNew.getValue());
-makeCopyBtn('diff-copy-btn', () => _lastDiffText);
 
-/* ── Preview ── */
-document.getElementById('edit-preview-btn').addEventListener('click', async () => {
-  const file     = document.getElementById('edit-file').value.trim();
-  const old_code = cmOld.getValue();
-  const new_code = cmNew.getValue();
-  if (!file || !old_code || !new_code) { toast('Fill in all three fields', 'error'); return; }
-
-  editStatus.textContent = 'Generating preview…';
-  editApplyBtn.disabled = true;
-  currentEditId = null;
-
-  try {
-    const data = await api('/preview-edit', {
-      method: 'POST',
-      body: JSON.stringify({ file, old_code, new_code }),
+  function makeCopyBtn(btnId, getContent) {
+    document.getElementById(btnId).addEventListener('click', () => {
+      const text = getContent();
+      if (!text) return;
+      navigator.clipboard.writeText(text).then(() => {
+        const btn = document.getElementById(btnId);
+        btn.textContent = '✓ Copied';
+        btn.classList.add('copied');
+        setTimeout(() => { btn.textContent = '⎘ Copy'; btn.classList.remove('copied'); }, 1800);
+      }).catch(() => toast('Copy failed', 'error'));
     });
-    currentEditId  = data.edit_id;
-    _lastDiffText  = data.diff || '';
-
-    // Render coloured diff with gutter line numbers
-    const lines = _lastDiffText.split('\n');
-    let addN = 0, delN = 0, ctxN = 0;
-    editDiff.innerHTML = lines.map((l, i) => {
-      const lineNum = i + 1;
-      if (l.startsWith('+++') || l.startsWith('---') || l.startsWith('@@')) {
-        return `<div class="diff-line diff-hdr"><span class="diff-gutter">${lineNum}</span><span class="diff-text">${escHtml(l)}</span></div>`;
-      }
-      if (l.startsWith('+')) {
-        return `<div class="diff-line diff-add"><span class="diff-gutter">+${lineNum}</span><span class="diff-text">${escHtml(l.slice(1))}</span></div>`;
-      }
-      if (l.startsWith('-')) {
-        return `<div class="diff-line diff-del"><span class="diff-gutter">-${lineNum}</span><span class="diff-text">${escHtml(l.slice(1))}</span></div>`;
-      }
-      return `<div class="diff-line diff-ctx"><span class="diff-gutter">${lineNum}</span><span class="diff-text">${escHtml(l)}</span></div>`;
-    }).join('');
-
-    editStatus.textContent = `edit_id: ${currentEditId} — ready to apply`;
-    editApplyBtn.disabled = false;
-    toast('Preview ready', 'success');
-  } catch(e) {
-    editDiff.innerHTML = `<div class="diff-line diff-del"><span class="diff-gutter">!</span><span class="diff-text">${escHtml(e.message)}</span></div>`;
-    editStatus.textContent = 'Preview failed';
-    toast('Preview error: ' + e.message, 'error');
   }
-});
+  makeCopyBtn('old-copy-btn', () => cmOld.getValue());
+  makeCopyBtn('new-copy-btn', () => cmNew.getValue());
+  makeCopyBtn('diff-copy-btn', () => _lastDiffText);
 
-/* ── Apply ── */
-editApplyBtn.addEventListener('click', async () => {
-  if (!currentEditId) return;
-  editStatus.textContent = 'Applying edit…';
-  editApplyBtn.disabled = true;
-  try {
-    const data = await api('/apply-edit', {
-      method: 'POST',
-      body: JSON.stringify({ edit_id: currentEditId }),
-    });
-    editStatus.textContent = `Applied — commit: ${data.commit_sha || 'ok'}`;
+  document.getElementById('edit-preview-btn').addEventListener('click', async () => {
+    const file     = document.getElementById('edit-file').value.trim();
+    const old_code = cmOld.getValue();
+    const new_code = cmNew.getValue();
+    if (!file || !old_code || !new_code) { toast('Fill in all three fields', 'error'); return; }
+    editStatus.textContent = 'Generating preview…';
+    editApplyBtn.disabled = true;
     currentEditId = null;
-    toast('Edit applied and committed ✅', 'success');
-  } catch(e) {
-    editStatus.textContent = 'Apply failed: ' + e.message;
-    toast('Apply error: ' + e.message, 'error');
-  }
-});
-
-/* ── Undo ── */
-document.getElementById('edit-undo-btn').addEventListener('click', async () => {
-  editStatus.textContent = 'Reverting last edit…';
-  try {
-    const data = await api('/undo', { method: 'POST' });
-    editStatus.textContent = `Reverted — commit: ${data.revert_sha || 'ok'}`;
-    toast('Last edit reverted ↩', 'info');
-  } catch(e) {
-    editStatus.textContent = 'Undo failed: ' + e.message;
-    toast('Undo error: ' + e.message, 'error');
-  }
-});
-
-/* ── Auto-detect file path on paste into Old Code ── */
-cmOld.on('change', (cm, change) => {
-  if (change.origin !== 'paste') return;
-  setTimeout(async () => {
-    const code = cm.getValue().replace(/^[\r\n]+/, '').replace(/[\s\r\n]+$/, '');
-    if (!code) return;
     try {
-      const params = new URLSearchParams({ q: code, path: getRepo(), limit: 1 });
-      const data = await api(`/search/code?${params}`);
-      if (data.matches && data.matches.length > 0) {
-        const file = data.matches[0].file;
-        document.getElementById('edit-file').value = file;
-        setEditorLang(file.split('.').pop().toLowerCase());
-        toast(`Auto-filled file path: ${file}`, 'success');
-      }
-    } catch (err) { /* silent */ }
-  }, 50);
-});
-
-/* ── Auto-detect file and old code on paste into New Code ── */
-cmNew.on('change', (cm, change) => {
-  if (change.origin !== 'paste') return;
-  setTimeout(async () => {
-    const code = cm.getValue();
-    if (!code || code.trim().length < 10) return;
-    
-    const hintFile = document.getElementById('edit-file').value.trim();
-    
-    try {
-      const data = await api('/search/detect-original', {
+      const data = await api('/preview-edit', {
         method: 'POST',
-        body: JSON.stringify({
-          code: code,
-          file_path_hint: hintFile || null
-        })
+        body: JSON.stringify({ file, old_code, new_code }),
       });
-      
-      if (data.found) {
-        document.getElementById('edit-file').value = data.file;
-        const ext = data.file.split('.').pop().toLowerCase();
-        setEditorLang(ext);
-        cmOld.setValue(data.source);
-        toast(`Auto-detected original function in ${data.file} and populated Old Code!`, 'success');
-      } else {
-        // Fallback: If AST symbol mapping fails, check exact match via code search
-        const cleanCode = code.replace(/^[\r\n]+/, '').replace(/[\s\r\n]+$/, '');
-        const params = new URLSearchParams({ q: cleanCode, path: getRepo(), limit: 1 });
-        const codeSearchRes = await api(`/search/code?${params}`);
-        if (codeSearchRes.matches && codeSearchRes.matches.length > 0) {
-          const file = codeSearchRes.matches[0].file;
+      currentEditId  = data.edit_id;
+      _lastDiffText  = data.diff || '';
+      const lines = _lastDiffText.split('\n');
+      editDiff.innerHTML = lines.map((l, i) => {
+        const lineNum = i + 1;
+        if (l.startsWith('+++') || l.startsWith('---') || l.startsWith('@@'))
+          return `<div class="diff-line diff-hdr"><span class="diff-gutter">${lineNum}</span><span class="diff-text">${escHtml(l)}</span></div>`;
+        if (l.startsWith('+'))
+          return `<div class="diff-line diff-add"><span class="diff-gutter">+${lineNum}</span><span class="diff-text">${escHtml(l.slice(1))}</span></div>`;
+        if (l.startsWith('-'))
+          return `<div class="diff-line diff-del"><span class="diff-gutter">-${lineNum}</span><span class="diff-text">${escHtml(l.slice(1))}</span></div>`;
+        return `<div class="diff-line diff-ctx"><span class="diff-gutter">${lineNum}</span><span class="diff-text">${escHtml(l)}</span></div>`;
+      }).join('');
+      editStatus.textContent = `edit_id: ${currentEditId} — ready to apply`;
+      editApplyBtn.disabled = false;
+      toast('Preview ready', 'success');
+    } catch(e) {
+      editDiff.innerHTML = `<div class="diff-line diff-del"><span class="diff-gutter">!</span><span class="diff-text">${escHtml(e.message)}</span></div>`;
+      editStatus.textContent = 'Preview failed';
+      toast('Preview error: ' + e.message, 'error');
+    }
+  });
+
+  editApplyBtn.addEventListener('click', async () => {
+    if (!currentEditId) return;
+    editStatus.textContent = 'Applying edit…';
+    editApplyBtn.disabled = true;
+    try {
+      const data = await api('/apply-edit', { method: 'POST', body: JSON.stringify({ edit_id: currentEditId }) });
+      editStatus.textContent = `Applied — commit: ${data.commit_sha || 'ok'}`;
+      currentEditId = null;
+      toast('Edit applied and committed ✅', 'success');
+    } catch(e) {
+      editStatus.textContent = 'Apply failed: ' + e.message;
+      toast('Apply error: ' + e.message, 'error');
+    }
+  });
+
+  document.getElementById('edit-undo-btn').addEventListener('click', async () => {
+    editStatus.textContent = 'Reverting last edit…';
+    try {
+      const data = await api('/undo', { method: 'POST' });
+      editStatus.textContent = `Reverted — commit: ${data.revert_sha || 'ok'}`;
+      toast('Last edit reverted ↩', 'info');
+    } catch(e) {
+      editStatus.textContent = 'Undo failed: ' + e.message;
+      toast('Undo error: ' + e.message, 'error');
+    }
+  });
+
+  cmOld.on('change', (cm, change) => {
+    if (change.origin !== 'paste') return;
+    setTimeout(async () => {
+      const code = cm.getValue().replace(/^[\r\n]+/, '').replace(/[\s\r\n]+$/, '');
+      if (!code) return;
+      try {
+        const params = new URLSearchParams({ q: code, path: getRepo(), limit: 1 });
+        const data = await api(`/search/code?${params}`);
+        if (data.matches && data.matches.length > 0) {
+          const file = data.matches[0].file;
           document.getElementById('edit-file').value = file;
           setEditorLang(file.split('.').pop().toLowerCase());
-          
-          const fullFileObj = await api(`/search/file-read?${new URLSearchParams({ file })}`);
-          cmOld.setValue(fullFileObj.content);
-          toast(`Matched exact file code in ${file} and populated Old Code!`, 'success');
+          toast(`Auto-filled file path: ${file}`, 'success');
         }
-      }
-    } catch (err) {
-      console.warn("Auto-detect failed:", err);
-    }
-  }, 50);
-});
+      } catch (err) { // silent }
+    }, 50);
+  });
+
+  cmNew.on('change', (cm, change) => {
+    if (change.origin !== 'paste') return;
+    setTimeout(async () => {
+      const code = cm.getValue();
+      if (!code || code.trim().length < 10) return;
+      const hintFile = document.getElementById('edit-file').value.trim();
+      try {
+        const data = await api('/search/detect-original', {
+          method: 'POST',
+          body: JSON.stringify({ code: code, file_path_hint: hintFile || null })
+        });
+        if (data.found) {
+          document.getElementById('edit-file').value = data.file;
+          setEditorLang(data.file.split('.').pop().toLowerCase());
+          cmOld.setValue(data.source);
+          toast(`Auto-detected original function in ${data.file} and populated Old Code!`, 'success');
+        } else {
+          const cleanCode = code.replace(/^[\r\n]+/, '').replace(/[\s\r\n]+$/, '');
+          const params = new URLSearchParams({ q: cleanCode, path: getRepo(), limit: 1 });
+          const codeSearchRes = await api(`/search/code?${params}`);
+          if (codeSearchRes.matches && codeSearchRes.matches.length > 0) {
+            const file = codeSearchRes.matches[0].file;
+            document.getElementById('edit-file').value = file;
+            setEditorLang(file.split('.').pop().toLowerCase());
+            const fullFileObj = await api(`/search/file-read?${new URLSearchParams({ file })}`);
+            cmOld.setValue(fullFileObj.content);
+            toast(`Matched exact file code in ${file} and populated Old Code!`, 'success');
+          }
+        }
+      } catch (err) { console.warn("Auto-detect failed:", err); }
+    }, 50);
+  });
+} // end if (edit page elements exist)
+*/
 
 
 /* ═══════════════════════════════════════════════════════════
@@ -1014,20 +1013,21 @@ let _mbLang   = null; // detected language string
 const modeBtns = document.querySelectorAll('.mode-btn');
 const singleWrap = document.getElementById('single-edit-wrap');
 const multiWrap  = document.getElementById('multi-block-area');
+const _mbParseBtn = document.getElementById('mb-parse-btn');
 
+if (_mbParseBtn) {
 modeBtns.forEach(btn => {
   btn.addEventListener('click', () => {
     modeBtns.forEach(b => b.classList.remove('active'));
     btn.classList.add('active');
     const mode = btn.dataset.mode;
     if (mode === 'single') {
-      singleWrap.style.display = 'flex';
-      multiWrap.style.display  = 'none';
+      if (singleWrap) singleWrap.style.display = 'flex';
+      if (multiWrap) multiWrap.style.display  = 'none';
     } else {
-      singleWrap.style.display = 'none';
-      multiWrap.style.display  = 'flex';
-      // Focus paste area
-      setTimeout(() => document.getElementById('mb-paste-input').focus(), 60);
+      if (singleWrap) singleWrap.style.display = 'none';
+      if (multiWrap) multiWrap.style.display  = 'flex';
+      setTimeout(() => { const el = document.getElementById('mb-paste-input'); if (el) el.focus(); }, 60);
     }
   });
 });
@@ -1328,11 +1328,15 @@ document.getElementById('mb-apply-all-btn').addEventListener('click', async () =
   toast(failed ? `Applied ${applied}, failed ${failed}` : `All ${applied} blocks applied ✅`, failed ? 'error' : 'success');
 });
 
+} // end if (_mbParseBtn)
+
 /* ═══════════════════════════════════════════════════════════
    BUILD / TEST / LINT (Sandbox)
 ═══════════════════════════════════════════════════════════ */
 const buildOutput    = document.getElementById('build-output');
+/*
 const sandboxStatus  = document.getElementById('sandbox-status-text');
+const containerStatus = document.getElementById('sandbox-container-status');
 
 function setBuildOutput(label, data) {
   const ok    = data.exit_code === 0;
@@ -1346,25 +1350,43 @@ function setBuildOutput(label, data) {
   else     toast(`${label} finished with errors`, 'error');
 }
 
+function setContainerStatus(msg, type) {
+  if (!containerStatus) return;
+  const colors = { idle: 'var(--text-muted)', starting: '#f0ad4e', running: '#5cb85c', error: '#d9534f' };
+  containerStatus.textContent = msg;
+  containerStatus.style.color = colors[type] || colors.idle;
+}
+
 async function loadSandboxStatus() {
+  if (!sandboxStatus) return;
   try {
     const d = await api('/sandbox/status');
     const stack = d.detected_stack || 'unknown';
     sandboxStatus.textContent = `Stack: ${stack}  |  Repo: ${d.repo || '?'}`;
+    if (!d.docker_available) {
+      setContainerStatus('Docker unavailable', 'error');
+    } else if (stack !== 'unknown') {
+      setContainerStatus('● Container ready', 'running');
+    }
   } catch(e) {
     sandboxStatus.textContent = 'Stack: unreachable';
+    setContainerStatus('Daemon offline', 'error');
   }
 }
 
 async function setupSandbox() {
   buildOutput.innerHTML = `<span class="out-label">▶ Setting up sandbox…</span>\n`;
+  setContainerStatus('● Starting container…', 'starting');
   try {
     const d = await api('/sandbox/setup', { method: 'POST' });
     setBuildOutput('setup_sandbox', d);
+    if (d.success) setContainerStatus('● Container ready', 'running');
+    else setContainerStatus('Setup failed', 'error');
     loadSandboxStatus();
   } catch(e) {
     buildOutput.innerHTML += `<span class="out-err">Error: ${escHtml(e.message)}</span>`;
     toast('setup_sandbox error: ' + e.message, 'error');
+    setContainerStatus('Setup failed', 'error');
   }
 }
 
@@ -1423,6 +1445,7 @@ async function installDeps() {
 document.getElementById('sandbox-status-btn')?.addEventListener('click', loadSandboxStatus);
 document.getElementById('sandbox-setup-btn')?.addEventListener('click', setupSandbox);
 document.getElementById('sandbox-deps-btn')?.addEventListener('click', installDeps);
+*/
 document.getElementById('compile-run-btn')?.addEventListener('click', runCompile);
 document.getElementById('test-run-btn')?.addEventListener('click', runTests);
 document.getElementById('lint-run-btn')?.addEventListener('click', runLint);
@@ -1580,6 +1603,11 @@ async function loadOverview() {
   const dirVal = document.getElementById('ov-dir')?.value.trim() || null;
   const pkgVal = document.getElementById('ov-package')?.value.trim() || null;
   
+  if (!files && !dirVal && !pkgVal) {
+    empty(ovResults, '🗺', 'Repository Overview', 'Enter a dir, package, or file filter above, then click Load Overview.');
+    return;
+  }
+
   loading(ovResults);
   try {
     const params = new URLSearchParams();
@@ -1595,139 +1623,63 @@ async function loadOverview() {
       return;
     }
 
-    if (data.mode === 'summary') {
-      let html = `
-        <div class="summary-stats">
-          <div class="summary-stat">
-            <span class="stat-icon">📄</span>
-            <div><div class="stat-value">${data.total_files}</div><div class="stat-label">Files</div></div>
-          </div>
-          <div class="summary-stat">
-            <span class="stat-icon">🔣</span>
-            <div><div class="stat-value">${data.total_symbols}</div><div class="stat-label">Symbols</div></div>
-          </div>
-          <div class="summary-stat">
-            <span class="stat-icon">🔗</span>
-            <div><div class="stat-value">${data.call_graph?.total_edges || 0}</div><div class="stat-label">Call Edges</div></div>
-          </div>
-          <div class="summary-stat">
-            <span class="stat-icon">📞</span>
-            <div><div class="stat-value">${data.call_graph?.unique_callers || 0}</div><div class="stat-label">Callers</div></div>
-          </div>
-          <div class="summary-stat">
-            <span class="stat-icon">📥</span>
-            <div><div class="stat-value">${data.call_graph?.unique_callees || 0}</div><div class="stat-label">Callees</div></div>
-          </div>
-        </div>`;
-
-      if (data.languages && Object.keys(data.languages).length) {
-        html += `<div style="margin-bottom:16px;"><h3 style="font-size:13px;font-weight:600;color:var(--text-primary);margin-bottom:8px;">Languages</h3>
-          <div style="display:flex;flex-wrap:wrap;gap:6px;">
-            ${Object.entries(data.languages).map(([lang, count]) => `<span style="background:var(--bg-tertiary);padding:4px 10px;border-radius:12px;font-size:12px;color:var(--text-secondary);">${escHtml(lang)}: ${count}</span>`).join('')}
-          </div></div>`;
-      }
-
-      if (data.top_dirs && data.top_dirs.length) {
-        html += `<div style="margin-bottom:16px;"><h3 style="font-size:13px;font-weight:600;color:var(--text-primary);margin-bottom:8px;">Directories</h3>`;
-        data.top_dirs.forEach(d => {
-          html += `<div class="match-card">
-            <div class="match-header"><span class="file-icon">📁</span><span class="file-path">${escHtml(d.path)}</span></div>
-            <div class="match-body" style="padding:6px 14px;font-size:12px;color:var(--text-muted);">${d.files} files, ${d.symbols} symbols</div>
-          </div>`;
-        });
-        html += `</div>`;
-      }
-
-      const cg = data.call_graph || {};
-      if (cg.top_connected_files && cg.top_connected_files.length) {
-        html += `<div style="margin-bottom:16px;"><h3 style="font-size:13px;font-weight:600;color:var(--text-primary);margin-bottom:8px;">Most Connected Files</h3>`;
-        cg.top_connected_files.forEach(f => {
-          html += `<div class="match-card">
-            <div class="match-header"><span class="file-icon">📄</span><span class="file-path">${escHtml(f.file)}</span></div>
-            <div class="match-body" style="padding:6px 14px;font-size:12px;color:var(--text-muted);">${f.outgoing_calls} outgoing calls</div>
-          </div>`;
-        });
-        html += `</div>`;
-      }
-
-      if (cg.top_callers && cg.top_callers.length) {
-        html += `<div style="margin-bottom:16px;"><h3 style="font-size:13px;font-weight:600;color:var(--text-primary);margin-bottom:8px;">Top Callers</h3>`;
-        cg.top_callers.forEach(c => {
-          html += `<div class="symbol-card">
-            <span class="symbol-name" style="font-size:12px;">${escHtml(c.symbol)}</span>
-            <span class="symbol-file" style="font-size:11px;">${c.calls} calls</span>
-          </div>`;
-        });
-        html += `</div>`;
-      }
-
-      if (cg.top_callees && cg.top_callees.length) {
-        html += `<div><h3 style="font-size:13px;font-weight:600;color:var(--text-primary);margin-bottom:8px;">Most Called</h3>`;
-        cg.top_callees.forEach(c => {
-          html += `<div class="symbol-card">
-            <span class="symbol-name" style="font-size:12px;">${escHtml(c.symbol)}</span>
-            <span class="symbol-file" style="font-size:11px;">called by ${c.called_by}</span>
-          </div>`;
-        });
-        html += `</div>`;
-      }
-
-      ovResults.innerHTML = html;
+    if (data.error) {
+      empty(ovResults, '⚠️', 'Overview failed', data.error);
       return;
     }
 
-    // Detailed mode
+    // Compact mode: files + edges arrays
     const fileCount = (data.files || []).length;
     const edgeCount = (data.edges || []).length;
-    const calleeCount = Object.keys(data.callees || {}).length;
-    const callerCount = Object.keys(data.callers || {}).length;
+    const totalSymbols = (data.files || []).reduce((sum, f) => sum + (f.symbols ? f.symbols.split(' ').length : 0), 0);
 
     let html = `
       <div class="summary-stats">
         <div class="summary-stat">
           <span class="stat-icon">📄</span>
-          <div><div class="stat-value">${fileCount}</div><div class="stat-label">Files</div></div>
+          <div><div class="stat-value">${data.total || fileCount}</div><div class="stat-label">Files</div></div>
+        </div>
+        <div class="summary-stat">
+          <span class="stat-icon">🔣</span>
+          <div><div class="stat-value">${totalSymbols}</div><div class="stat-label">Symbols</div></div>
         </div>
         <div class="summary-stat">
           <span class="stat-icon">🔗</span>
           <div><div class="stat-value">${edgeCount}</div><div class="stat-label">Call Edges</div></div>
         </div>
-        <div class="summary-stat">
-          <span class="stat-icon">📞</span>
-          <div><div class="stat-value">${calleeCount}</div><div class="stat-label">Callees</div></div>
-        </div>
-        <div class="summary-stat">
-          <span class="stat-icon">📥</span>
-          <div><div class="stat-value">${callerCount}</div><div class="stat-label">Callers</div></div>
-        </div>
       </div>`;
 
-    // Show call edges
+    // Show call edges (compact format: "caller@line -> callee, callee2")
     if (data.edges && data.edges.length > 0) {
       html += `<div style="margin-bottom:16px;"><h3 style="font-size:13px;font-weight:600;color:var(--text-primary);margin-bottom:8px;">Call Edges</h3>`;
       data.edges.forEach(edge => {
+        // Parse "caller@line -> callee1, callee2"
+        const arrowIdx = edge.indexOf(' -> ');
+        const callerPart = edge.substring(0, arrowIdx);
+        const calleesPart = edge.substring(arrowIdx + 4);
+        const callerName = callerPart.split('@')[0];
         html += `
-          <div class="symbol-card" onclick="document.getElementById('cg-symbol').value='${escHtml(edge.caller_name || '')}'; navigateToPage('call-graph');">
-            <span class="symbol-name" style="font-size:12px;">${escHtml(edge.caller_name || 'unknown')} → ${escHtml(edge.callee_name || 'unknown')}</span>
-            <span class="symbol-file" style="font-size:11px;">${escHtml(edge.caller_file || '')}</span>
+          <div class="symbol-card" onclick="document.getElementById('cg-symbol').value='${escHtml(callerName)}'; navigateToPage('call-graph');">
+            <span class="symbol-name" style="font-size:12px;">${escHtml(edge)}</span>
           </div>`;
       });
       html += `</div>`;
     }
 
-    // Show files
+    // Show files (compact format: {path, symbols} where symbols is "name:kind:start-end ...")
     if (data.files && data.files.length > 0) {
       html += `<div><h3 style="font-size:13px;font-weight:600;color:var(--text-primary);margin-bottom:8px;">Files</h3>`;
       data.files.forEach(file => {
-        const symbols = (file.symbols || []).map(s => s.name).join(', ');
+        const symbols = file.symbols || '';
+        const displayName = symbols ? symbols.split(' ').slice(0, 5).join(' ') + (symbols.split(' ').length > 5 ? '...' : '') : 'No symbols';
         html += `
           <div class="match-card">
             <div class="match-header">
               <span class="file-icon">📄</span>
-              <span class="file-path">${escHtml(file.file)}</span>
+              <span class="file-path">${escHtml(file.path)}</span>
             </div>
-            <div class="match-body" style="padding:8px 14px;font-size:12px;color:var(--text-muted);">
-              ${symbols ? 'Symbols: ' + escHtml(symbols) : 'No symbols'}
+            <div class="match-body" style="padding:8px 14px;font-size:12px;color:var(--text-muted);font-family:var(--font-mono);">
+              ${symbols ? escHtml(displayName) : 'No symbols'}
             </div>
           </div>`;
       });
@@ -1950,10 +1902,108 @@ async function loadImportGraphFiles() {
 ═══════════════════════════════════════════════════════════ */
 const feResults = document.getElementById('fe-results');
 
-document.getElementById('fe-signature-btn').addEventListener('click', () => loadFunctionExtract('signature'));
-document.getElementById('fe-body-btn').addEventListener('click', () => loadFunctionExtract('body'));
+document.getElementById('fe-find-btn').addEventListener('click', () => extractByName('both'));
+document.getElementById('fe-signature-btn').addEventListener('click', () => {
+  const name = document.getElementById('fe-name').value.trim();
+  if (name) return extractByName('signature');
+  loadFunctionExtract('signature');
+});
+document.getElementById('fe-body-btn').addEventListener('click', () => {
+  const name = document.getElementById('fe-name').value.trim();
+  if (name) return extractByName('body');
+  loadFunctionExtract('body');
+});
+document.getElementById('fe-name').addEventListener('keydown', e => { if (e.key === 'Enter') extractByName('both'); });
 
+async function extractByName(extractType) {
+  const name = document.getElementById('fe-name').value.trim();
+  if (!name) { toast('Enter a function or class name', 'error'); return; }
+  if (name.length < 2) { toast('Name must be at least 2 characters', 'error'); return; }
 
+  loading(feResults);
+  try {
+    const params = new URLSearchParams({ name, extract: extractType });
+    const data = await api(`/search/extract-by-name?${params}`);
+
+    if (!data || !data.matches || data.matches.length === 0) {
+      empty(feResults, '🔍', 'Not found', `No symbol matching "${escHtml(name)}".`);
+      return;
+    }
+
+    const matches = data.matches;
+
+    if (matches.length === 1) {
+      // Auto-fill fields and show code
+      const sym = matches[0];
+      fillFields(sym);
+      renderExtractResults(matches, extractType);
+      toast(`Found ${sym.kind} "${sym.name}" in ${sym.file}`, 'success');
+    } else {
+      // Multiple matches — show pick list first, then extract on click
+      let html = `<div class="stats-bar"><span class="stats-badge">🔍 ${matches.length} matches</span> — click to extract</div>`;
+      matches.forEach((sym, i) => {
+        const preview = extractType === 'signature'
+          ? escHtml(sym.signature || '').slice(0, 200)
+          : escHtml(sym.body || '').slice(0, 200);
+        html += `
+          <div class="match-card fe-pick" data-idx="${i}" style="cursor:pointer">
+            <div class="match-header">
+              <span class="file-icon">📄</span>
+              <span class="file-path">${escHtml(sym.file)}:${sym.line_start}-${sym.line_end}</span>
+              <span class="match-kind">${escHtml(sym.kind)}</span>
+            </div>
+            <div class="match-body">
+              <pre class="match-code" style="font-family:var(--font-mono);font-size:12.5px;margin:0;max-height:120px;overflow:hidden;">${preview}${preview.length >= 200 ? '…' : ''}</pre>
+            </div>
+          </div>`;
+      });
+      feResults.innerHTML = html;
+
+      feResults.querySelectorAll('.fe-pick').forEach(el => {
+        el.addEventListener('click', () => {
+          const sym = matches[parseInt(el.dataset.idx)];
+          fillFields(sym);
+          renderExtractResults([sym], extractType);
+          toast(`Selected ${sym.kind} "${sym.name}"`, 'success');
+        });
+      });
+    }
+  } catch (e) {
+    empty(feResults, '⚠️', 'Search failed', e.message);
+    toast('Error: ' + e.message, 'error');
+  }
+}
+
+function renderExtractResults(matches, extractType) {
+  let html = `<div class="stats-bar"><span class="stats-badge">⚡ ${extractType}</span> — ${matches.length} result(s)</div>`;
+  matches.forEach(sym => {
+    const content = extractType === 'signature'
+      ? (sym.signature || 'No signature found')
+      : extractType === 'body'
+        ? (sym.body || 'No body found')
+        : ((sym.signature || '') + '\n' + (sym.body || '')).trim() || 'No content found';
+
+    const lang = detectLang(sym.file);
+    html += `
+      <div class="match-card">
+        <div class="match-header">
+          <span class="file-icon">📄</span>
+          <span class="file-path">${escHtml(sym.file)}:${sym.line_start}-${sym.line_end}</span>
+          <span class="match-kind">${escHtml(sym.kind)}</span>
+        </div>
+        <div class="match-body">
+          <pre class="match-code" style="white-space:pre-wrap;font-family:var(--font-mono);font-size:12.5px;">${escHtml(content)}</pre>
+        </div>
+      </div>`;
+  });
+  feResults.innerHTML = html;
+}
+
+function fillFields(sym) {
+  document.getElementById('fe-file').value = sym.file;
+  document.getElementById('fe-line-start').value = sym.line_start;
+  document.getElementById('fe-line-end').value = sym.line_end;
+}
 
 async function loadFunctionExtract(type) {
   const file = document.getElementById('fe-file').value.trim();
@@ -2688,6 +2738,7 @@ async function loadTrace(type) {
 /* ═══════════════════════════════════════════════════════════
    FUNCTION HISTORY PAGE
 ═══════════════════════════════════════════════════════════ */
+/*
 const fhResults = document.getElementById('fh-results');
 
 document.getElementById('fh-history-btn').addEventListener('click', loadFunctionHistory);
@@ -2742,6 +2793,7 @@ async function indexGitHistory() {
     toast('Failed to index git history: ' + e.message, 'error');
   }
 }
+*/
 
 /* ═══════════════════════════════════════════════════════════
    SIMILAR FUNCTIONS PAGE
@@ -2848,4 +2900,4 @@ async function loadReferences(type) {
 }
 
 // ── INIT ──
-loadSandboxStatus();
+// loadSandboxStatus();

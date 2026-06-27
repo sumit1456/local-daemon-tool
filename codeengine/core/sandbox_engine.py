@@ -21,34 +21,46 @@ logger = logging.getLogger("codeengine.sandbox")
 
 # ── Stack → Docker image mapping ─────────────────────────────────────────────
 STACK_IMAGES: dict[str, str] = {
-    "python": "python:3.12-slim",
-    "node":   "node:20-slim",
-    "java":   "maven:3.9-eclipse-temurin-21-alpine",
-    "go":     "golang:1.23-alpine",
-    "rust":   "rust:1.80-alpine",
+    "python":      "python:3.12-slim",
+    "node":        "node:20-slim",
+    "java-maven":  "maven:3.9-eclipse-temurin-21-alpine",
+    "java-gradle": "gradle:8.7-jdk21-alpine",
+    "go":          "golang:1.23-alpine",
+    "rust":        "rust:1.80-alpine",
+    "ruby":        "ruby:3.3-slim",
+    "php":         "php:8.3-cli",
+    "cpp":         "gcc:14",
 }
 
 # ── Stack indicator files for auto-detection ──────────────────────────────────
 STACK_INDICATORS: list[tuple[str, str]] = [
     # (filename_to_check, stack_name)
-    ("pom.xml",          "java"),
-    ("build.gradle",     "java"),
-    ("build.gradle.kts", "java"),
+    ("pom.xml",          "java-maven"),
+    ("build.gradle",     "java-gradle"),
+    ("build.gradle.kts", "java-gradle"),
     ("package.json",     "node"),
     ("go.mod",           "go"),
     ("Cargo.toml",       "rust"),
     ("pyproject.toml",   "python"),
     ("setup.py",         "python"),
     ("requirements.txt", "python"),
+    ("Gemfile",          "ruby"),
+    ("composer.json",    "php"),
+    ("CMakeLists.txt",   "cpp"),
+    ("Makefile",         "cpp"),
 ]
 
 # ── Dep install commands per stack ────────────────────────────────────────────
 DEPS_COMMANDS: dict[str, str] = {
-    "python": "pip install -r /repo/requirements.txt -q 2>&1 || true",
-    "node":   "npm install --prefix /repo --silent 2>&1 || true",
-    "java":   "mvn dependency:resolve -f /repo/pom.xml -q 2>&1 || true",
-    "go":     "cd /repo && go mod download 2>&1 || true",
-    "rust":   "cd /repo && cargo fetch 2>&1 || true",
+    "python":      "pip install -r /repo/requirements.txt -q 2>&1 || true",
+    "node":        "npm install --prefix /repo --silent 2>&1 || true",
+    "java-maven":  "mvn dependency:resolve -f /repo/pom.xml -q 2>&1 || true",
+    "java-gradle": "cd /repo && gradle dependencies --quiet 2>&1 || true",
+    "go":          "cd /repo && go mod download 2>&1 || true",
+    "rust":        "cd /repo && cargo fetch 2>&1 || true",
+    "ruby":        "cd /repo && bundle install --quiet 2>&1 || true",
+    "php":         "cd /repo && composer install --no-interaction --quiet 2>&1 || true",
+    "cpp":         "echo 'No package manager for C/C++ — build deps via Makefile/CMakeLists.txt'",
 }
 
 # ── Full dependency install commands (system + project deps) ──────────────────
@@ -62,9 +74,13 @@ FULL_DEPS_COMMANDS: dict[str, str] = {
         "apt-get update -qq && apt-get install -y -qq git > /dev/null 2>&1; "
         "npm install --prefix /repo --silent 2>&1 || true"
     ),
-    "java": (
+    "java-maven": (
         "apk add --no-cache git > /dev/null 2>&1 || true; "
         "mvn dependency:resolve -f /repo/pom.xml -q 2>&1 || true"
+    ),
+    "java-gradle": (
+        "apk add --no-cache git > /dev/null 2>&1 || true; "
+        "cd /repo && gradle dependencies --quiet 2>&1 || true"
     ),
     "go": (
         "apk add --no-cache git > /dev/null 2>&1 || true; "
@@ -73,6 +89,18 @@ FULL_DEPS_COMMANDS: dict[str, str] = {
     "rust": (
         "apk add --no-cache git > /dev/null 2>&1 || true; "
         "cd /repo && cargo fetch 2>&1 || true"
+    ),
+    "ruby": (
+        "apt-get update -qq && apt-get install -y -qq git build-essential > /dev/null 2>&1; "
+        "cd /repo && bundle install --quiet 2>&1 || true"
+    ),
+    "php": (
+        "apt-get update -qq && apt-get install -y -qq git unzip > /dev/null 2>&1; "
+        "cd /repo && composer install --no-interaction --quiet 2>&1 || true"
+    ),
+    "cpp": (
+        "apt-get update -qq && apt-get install -y -qq git build-essential cmake > /dev/null 2>&1; "
+        "echo 'C/C++ deps: use Makefile or CMakeLists.txt to build'"
     ),
 }
 
@@ -99,11 +127,15 @@ def install_container_deps(container, stack: str) -> dict:
 # ── Named dep volumes per stack ───────────────────────────────────────────────
 DEP_VOLUMES: dict[str, tuple[str, str]] = {
     # stack: (volume_name, container_mount_path)
-    "python": ("ce-python-deps", "/root/.cache/pip"),
-    "node":   ("ce-node-deps",   "/repo/node_modules"),
-    "java":   ("ce-java-deps",   "/root/.m2"),
-    "go":     ("ce-go-deps",     "/go/pkg/mod"),
-    "rust":   ("ce-rust-deps",   "/root/.cargo/registry"),
+    "python":      ("ce-python-deps",      "/root/.cache/pip"),
+    "node":        ("ce-node-deps",        "/repo/node_modules"),
+    "java-maven":  ("ce-java-maven-deps",  "/root/.m2"),
+    "java-gradle": ("ce-java-gradle-deps", "/root/.gradle/caches"),
+    "go":          ("ce-go-deps",          "/go/pkg/mod"),
+    "rust":        ("ce-rust-deps",        "/root/.cargo/registry"),
+    "ruby":        ("ce-ruby-deps",        "/usr/local/bundle"),
+    "php":         ("ce-php-deps",         "/root/.composer/cache"),
+    "cpp":         ("ce-cpp-deps",         "/tmp/cpp-build"),
 }
 
 
@@ -169,7 +201,7 @@ def _get_or_start_container(stack: str, repo_root: str) -> object:
     # Build volumes dict
     dep_vol_name, dep_mount = DEP_VOLUMES[stack]
     volumes = {
-        repo_root: {"bind": "/repo", "mode": "ro"},
+        repo_root: {"bind": "/repo", "mode": "rw"},
         dep_vol_name: {"bind": dep_mount, "mode": "rw"},
     }
 
@@ -362,11 +394,12 @@ def _parse_pytest(raw: str) -> dict:
 
 
 PARSERS = {
-    "python": _parse_ruff,
-    "node":   _parse_tsc,
-    "java":   _parse_maven,
-    "go":     _parse_go,
-    "rust":   _parse_cargo,
+    "python":      _parse_ruff,
+    "node":        _parse_tsc,
+    "java-maven":  _parse_maven,
+    "java-gradle": _parse_maven,
+    "go":          _parse_go,
+    "rust":        _parse_cargo,
 }
 
 
@@ -383,7 +416,7 @@ async def setup_sandbox(repo_root: str) -> dict:
 
     stack = detect_stack(repo_root)
     if not stack:
-        return {"success": False, "error": "Could not detect project stack. No pom.xml, package.json, go.mod, Cargo.toml, or requirements.txt found."}
+        return {"success": False, "error": "Could not detect project stack. No pom.xml, build.gradle, package.json, go.mod, Cargo.toml, requirements.txt, Gemfile, composer.json, or CMakeLists.txt found."}
 
     try:
         container = _get_or_start_container(stack, repo_root)
@@ -440,11 +473,12 @@ async def check_syntax(file_path: str, repo_root: str) -> dict:
 
     container_file = f"/repo/{file_path}"
     commands = {
-        "python": f"ruff check {container_file} --output-format json 2>&1",
-        "node":   f"npx eslint {container_file} --format json 2>&1 || true",
-        "java":   f"javac -proc:none -cp /repo/target/dependency/* {container_file} 2>&1 || true",
-        "go":     f"go vet /repo/... 2>&1 || true",
-        "rust":   f"cargo check --manifest-path /repo/Cargo.toml --message-format json 2>&1 || true",
+        "python":      f"ruff check {container_file} --output-format json 2>&1",
+        "node":        f"npx eslint {container_file} --format json 2>&1 || true",
+        "java-maven":  f"javac -proc:none -cp /repo/target/dependency/* {container_file} 2>&1 || true",
+        "java-gradle": f"javac -proc:none -cp /repo/build/libs/* {container_file} 2>&1 || true",
+        "go":          f"go vet /repo/... 2>&1 || true",
+        "rust":        f"cargo check --manifest-path /repo/Cargo.toml --message-format json 2>&1 || true",
     }
     cmd = commands.get(stack, "echo 'unsupported'")
 
@@ -482,21 +516,50 @@ async def compile_project(repo_root: str) -> dict:
     container = _get_or_start_container(stack, repo_root)
 
     compile_commands = {
-        "python": "ruff check /repo --output-format json 2>&1",
-        "node":   "npx tsc --noEmit 2>&1 || true",
-        "java":   "mvn compile -f /repo/pom.xml -q 2>&1 || true",
-        "go":     "cd /repo && go build ./... 2>&1 || true",
-        "rust":   "cargo check --manifest-path /repo/Cargo.toml --message-format json 2>&1 || true",
+        "python":      "ruff check /repo --output-format json 2>&1",
+        "node":        "npx tsc --noEmit 2>&1 || true",
+        "java-maven":  "mvn compile -f /repo/pom.xml -q 2>&1 || true",
+        "java-gradle": "cd /repo && gradle compileJava --quiet 2>&1 || true",
+        "go":          "cd /repo && go build ./... 2>&1 || true",
+        "rust":        "cargo check --manifest-path /repo/Cargo.toml --message-format json 2>&1 || true",
     }
     cmd = compile_commands.get(stack, "echo 'unsupported'")
 
     start = time.time()
     _, raw = container.exec_run(["/bin/sh", "-c", cmd], workdir="/repo")
-    elapsed = round(time.time() - start, 2)
-
     raw_str = raw.decode("utf-8", errors="replace") if raw else ""
+
     parser = PARSERS.get(stack)
     errors = parser(raw_str) if parser else []
+
+    # Python: also run ast.parse to catch syntax errors ruff misses
+    if stack == "python":
+        syntax_cmd = """python3 -c "
+import ast, pathlib
+repo = pathlib.Path('/repo')
+for f in repo.rglob('*.py'):
+    try:
+        ast.parse(f.read_text(), str(f))
+    except SyntaxError as e:
+        rel = str(f.relative_to('/repo'))
+        print(f'SYNTAX_ERROR: {rel}:{e.lineno}:{e.offset}: {e.msg}')
+" 2>&1"""
+        _, syntax_raw = container.exec_run(["/bin/sh", "-c", syntax_cmd], workdir="/repo")
+        syntax_str = syntax_raw.decode("utf-8", errors="replace") if syntax_raw else ""
+        
+        for line in syntax_str.splitlines():
+            if line.startswith("SYNTAX_ERROR:"):
+                parts = line[13:].split(":", 2)
+                if len(parts) >= 3:
+                    errors.append({
+                        "file": parts[0].strip(),
+                        "line": int(parts[1]) if parts[1].isdigit() else 0,
+                        "col": int(parts[2].split(":")[0]) if parts[2].split(":")[0].isdigit() else 0,
+                        "message": parts[2].split(":", 1)[1].strip() if ":" in parts[2] else parts[2].strip(),
+                        "severity": "error",
+                    })
+
+    elapsed = round(time.time() - start, 2)
 
     return {
         "stack": stack,
@@ -523,11 +586,12 @@ async def run_tests(repo_root: str, test_path: str | None = None) -> dict:
 
     target = f"/repo/{test_path}" if test_path else "/repo"
     test_commands = {
-        "python": f"pytest {target} --tb=short -q 2>&1",
-        "node":   f"npm test --prefix /repo 2>&1 || true",
-        "java":   f"mvn test -f /repo/pom.xml -q 2>&1 || true",
-        "go":     f"cd /repo && go test ./... -v 2>&1 || true",
-        "rust":   f"cargo test --manifest-path /repo/Cargo.toml 2>&1 || true",
+        "python":      f"pytest {target} --tb=short -q 2>&1",
+        "node":        f"npm test --prefix /repo 2>&1 || true",
+        "java-maven":  f"mvn test -f /repo/pom.xml -q 2>&1 || true",
+        "java-gradle": f"cd /repo && gradle test --quiet 2>&1 || true",
+        "go":          f"cd /repo && go test ./... -v 2>&1 || true",
+        "rust":        f"cargo test --manifest-path /repo/Cargo.toml 2>&1 || true",
     }
     cmd = test_commands.get(stack, "echo 'unsupported'")
 

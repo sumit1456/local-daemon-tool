@@ -1,0 +1,187 @@
+MCP CodeEngine — Full 28-Tool Review
+Tested: 2026-06-25 | Repo: game-backend (39 Java files)
+
+========================================
+SUMMARY
+========================================
+Total tools: 28
+Working & faster than native: 12 (43%)
+Working but slower/redundant: 6 (21%)
+Broken: 4 (14%)
+Limited/unreliable: 6 (21%)
+
+========================================
+12 TOOLS THAT WORK & ARE FASTER THAN NATIVE
+========================================
+
+1. ping
+   Status: Healthy on http://127.0.0.1:8000
+   Use: Health check before session start
+
+2. search_symbol
+   Token cost: ~50-100
+   Result: PlayerService:c:20-78 with exact line ranges
+   Why better: Instant symbol lookup. Returns kind + file + line range. Grep can't do this.
+
+3. get_overview
+   Token cost: ~200-500
+   Result: Compact file listing + call graph edges for a directory
+   Why better: One call shows symbols and how they connect. Native requires multiple reads.
+
+4. extract_class
+   Token cost: ~100-300
+   Result: Full PlayerService source (59 lines), no noise
+   Why better: Read exactly one class. Native read gets entire file including imports/package.
+
+5. extract_function
+   Token cost: ~50-150
+   Result: registerPlayer method body (13 lines)
+   Why better: Surgical function read. Native read gets entire file.
+
+6. get_imports
+   Token cost: ~50-100
+   Result: 12 imports with module path and nesting level
+   Why better: One call. Native requires reading the file and parsing import lines.
+
+7. get_callers
+   Token cost: ~200-500
+   Result: Found PlayerController calls registerPlayer
+   Why better: Reverse call graph lookup. Native grep finds text matches, not call relationships.
+
+8. get_callees
+   Token cost: ~200-500
+   Result: Found 5 callees: toEntity, saveAndFlush, publishEvent, toResponse, getDeviceId
+   Why better: Forward call graph. Native requires reading source and manual tracing.
+
+9. get_importers
+   Token cost: ~200-500
+   Result: Found 7 files that import Player entity
+   Why better: Reverse dependency lookup across codebase. Native needs grep in every directory.
+
+10. get_file_deps
+    Token cost: ~300-600
+    Result: Full bidirectional dependency graph in one call
+    Why better: Replaces 2-3 separate grep calls (imports + importers).
+
+11. get_edit_context
+    Token cost: ~200-500
+    Result: Source + callers + callees + imports for registerPlayer
+    Why better: BEST TOOL. Replaces 4-5 native calls with one. Essential before editing any function.
+
+12. semantic_search
+    Token cost: ~200-500
+    Query: "find all REST controller endpoints"
+    Result: Found all 5 controllers ranked by relevance
+    Why better: Natural language search. Can't do this with grep.
+
+========================================
+6 TOOLS THAT WORK BUT SLOWER/REDUNDANT THAN NATIVE
+========================================
+
+13. get_index
+    Token cost: ~200-500
+    Why slower: Native directory read is instant with no HTTP overhead
+    When to use: Only for symbol-level overview, not simple file listing
+
+14. get_body
+    Token cost: ~200-500
+    Why redundant: extract_function does the same thing cheaper (~50-150 tokens) and only needs function name
+    When to use: Only if you already know exact line numbers and extract_function failed
+
+15. get_signature
+    Token cost: ~30-80
+    Why unreliable: Returned empty for valid line ranges. Finicky with exact line numbers.
+    When to use: Never. Use extract_function instead.
+
+16. get_defined_symbols
+    Token cost: ~50-100
+    Why limited: Only works on indexed language (Java). Returned empty for Python files.
+    When to use: Only for Java codebases. Use native grep for other languages.
+
+17. impact_analysis
+    Token cost: ~500-1000
+    Why slower: Works but expensive. get_callers + count_references gives same info cheaper.
+    When to use: Only for critical refactoring where you need the full picture.
+
+18. reindex
+    Token cost: N/A
+    Why limited: One-time setup tool. Not useful during normal coding sessions.
+    When to use: Only when switching repos.
+
+========================================
+4 BROKEN TOOLS
+========================================
+
+19. preview_smart_edit
+    Error: 500 Internal Server Error
+    Impact: Cannot preview or apply smart edits. Entire editing workflow broken.
+    Fix needed: Yes
+
+20. trace_execution
+    Result: Returned empty flow array
+    Impact: Cannot trace execution chains. Was supposed to show call depth.
+    Fix needed: Yes
+
+21. get_blast_radius
+    Result: Returned total_affected=0, empty callers_by_depth
+    Impact: Cannot assess transitive impact. Precomputed graph appears incomplete.
+    Fix needed: Yes
+
+22. count_references
+    Result: Returned 0 for PlayerService (used in 7+ files)
+    Impact: Cannot use for risk assessment. Results are wrong.
+    Fix needed: Yes
+
+========================================
+6 LIMITED/UNRELIABLE TOOLS
+========================================
+
+23. find_file
+    Result: Empty output for *.py
+    Issue: Only searches indexed language (Java). Native glob works on all files.
+    Verdict: Use native glob instead.
+
+24. search_code
+    Result: Returned 0 for "createPlayer" (exists in 3 places)
+    Issue: Path mismatch between index and filesystem.
+    Verdict: Use native grep instead.
+
+25. get_type_info
+    Result: Returned empty params={} for PlayerService
+    Issue: Java type info not populated in index.
+    Verdict: Not useful for Java. May work for other languages.
+
+26. get_docstring
+    Result: Empty
+    Issue: Java docstrings not indexed.
+    Verdict: Not useful for Java.
+
+27. apply_smart_edit
+    Result: Not tested
+    Issue: Depends on broken preview_smart_edit.
+    Verdict: Cannot use until preview is fixed.
+
+28. toggle_embeddings
+    Result: Not tested (would change daemon state)
+    Issue: Production toggle, not for testing.
+    Verdict: Use only when needed.
+
+========================================
+FINAL VERDICT
+========================================
+12 out of 28 tools (43%) are genuinely useful and faster than native.
+4 tools (14%) are completely broken.
+6 tools (21%) are limited to Java-only or have path issues.
+6 tools (21%) work but native alternatives are better.
+
+The 12 good tools save significant tokens:
+  get_edit_context:    5x savings vs native
+  extract_class:       2.5x savings vs native
+  extract_function:    4x savings vs native
+  get_importers:       4x savings vs native
+  get_file_deps:       2.5x savings vs native
+  search_symbol:       4x savings vs native
+
+BOTTOM LINE: Keep MCP enabled for the 12 good tools.
+             Use native grep/glob for search and file finding.
+             Avoid preview_smart_edit, trace_execution, get_blast_radius, count_references until fixed.

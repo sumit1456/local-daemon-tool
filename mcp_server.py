@@ -156,7 +156,7 @@ async def ping() -> dict:
         }
 
 
-@mcp.tool()
+# @mcp.tool()
 async def reindex(repo_path: str) -> dict:
     """
     Switch the daemon to index a different repository.
@@ -173,7 +173,7 @@ async def reindex(repo_path: str) -> dict:
     return result
 
 
-@mcp.tool()
+# @mcp.tool()
 async def search_code(
     query: str,
     path: str = ".",
@@ -227,7 +227,7 @@ async def search_symbol(
     return await _get("/search/symbol", name=name, kind=kind)
 
 
-@mcp.tool()
+# @mcp.tool()
 async def find_file(
     pattern: str,
     root: str = ".",
@@ -276,7 +276,25 @@ async def extract_class(
     return await _get("/search/class", file=file, name=name)
 
 
-@mcp.tool()
+# @mcp.tool()
+async def extract_by_name(
+    name: str,
+    kind: str | None = None,
+    extract: str = "body",
+) -> dict:
+    """
+    Search for a function/class by name and extract its code in one call.
+    No need to know file path or line numbers — just provide the name.
+
+    Args:
+        name: Function or class name to search for (partial matches supported).
+        kind: Optional filter — function | class | method | interface.
+        extract: What to extract — "signature" (just sig+docstring), "body" (full code), or "both".
+    """
+    return await _get("/search/extract-by-name", name=name, kind=kind, extract=extract)
+
+
+# @mcp.tool()
 async def preview_edit(
     file: str,
     old_code: str,
@@ -300,7 +318,7 @@ async def preview_edit(
     })
 
 
-@mcp.tool()
+# @mcp.tool()
 async def apply_edit(edit_id: str) -> dict:
     """
     Write a previewed edit to disk and automatically create a git commit.
@@ -312,7 +330,7 @@ async def apply_edit(edit_id: str) -> dict:
     return await _post("/apply-edit", {"edit_id": edit_id})
 
 
-@mcp.tool()
+# @mcp.tool()
 async def undo_edit() -> dict:
     """
     Revert the last applied edit by running `git revert HEAD`.
@@ -321,7 +339,7 @@ async def undo_edit() -> dict:
     return await _post("/undo", {})
 
 
-@mcp.tool()
+# @mcp.tool()
 async def get_index(
     files: list[str] | None = None,
     dir: str | None = None,
@@ -396,7 +414,7 @@ async def get_callees(symbol_name: str) -> dict:
     return await _get("/search/callees", symbol_name=symbol_name)
 
 
-@mcp.tool()
+# @mcp.tool()
 async def get_signature(
     file: str,
     line_start: int,
@@ -419,7 +437,7 @@ async def get_signature(
     )
 
 
-@mcp.tool()
+# @mcp.tool()
 async def get_body(
     file: str,
     line_start: int,
@@ -441,7 +459,7 @@ async def get_body(
     )
 
 
-@mcp.tool()
+# @mcp.tool()
 async def detect_snippet(
     code: str,
     file_hint: str | None = None,
@@ -463,7 +481,7 @@ async def detect_snippet(
     })
 
 
-@mcp.tool()
+# @mcp.tool()
 async def preview_smart_edit(
     file: str,
     new_code: str,
@@ -482,7 +500,7 @@ async def preview_smart_edit(
     })
 
 
-@mcp.tool()
+# @mcp.tool()
 async def apply_smart_edit(edit_id: str) -> dict:
     """
     Apply a smart edit preview to disk and create a git commit.
@@ -494,7 +512,7 @@ async def apply_smart_edit(edit_id: str) -> dict:
     return await _post("/apply-smart-edit", {"edit_id": edit_id})
 
 
-@mcp.tool()
+# @mcp.tool()
 async def parse_blocks(
     code: str,
     file_hint: str | None = None,
@@ -552,7 +570,7 @@ async def get_file_deps(file: str) -> dict:
     return await _get("/search/file-deps", file=file)
 
 
-@mcp.tool()
+# @mcp.tool()
 async def get_type_info(symbol_name: str, file: str | None = None) -> dict:
     """
     Return parameter types and return type for a symbol.
@@ -565,7 +583,7 @@ async def get_type_info(symbol_name: str, file: str | None = None) -> dict:
     return await _get("/search/type-info", symbol_name=symbol_name, file=file)
 
 
-@mcp.tool()
+# @mcp.tool()
 async def get_defined_symbols(file: str) -> dict:
     """
     Get all symbols defined in a file — functions, classes, methods, constants.
@@ -577,7 +595,7 @@ async def get_defined_symbols(file: str) -> dict:
     return await _get("/search/defined-symbols", file=file)
 
 
-@mcp.tool()
+# @mcp.tool()
 async def count_references(symbol_name: str) -> dict:
     """
     Count how many times a symbol is referenced across the codebase.
@@ -589,7 +607,7 @@ async def count_references(symbol_name: str) -> dict:
     return await _get("/search/count-references", symbol_name=symbol_name)
 
 
-@mcp.tool()
+# @mcp.tool()
 async def impact_analysis(symbol_name: str) -> dict:
     """
     Full impact assessment before changing a symbol.
@@ -601,7 +619,7 @@ async def impact_analysis(symbol_name: str) -> dict:
     return await _get("/search/impact-analysis", symbol_name=symbol_name)
 
 
-@mcp.tool()
+# @mcp.tool()
 async def trace_execution(symbol_name: str, max_depth: int = 5) -> dict:
     """
     Trace execution flow through the application from a given symbol.
@@ -649,7 +667,7 @@ async def get_edit_context(
 
 # ── Missing Daemon Endpoints ─────────────────────────────────────────────────
 
-@mcp.tool()
+# @mcp.tool()
 async def search_usages(symbol_name: str, limit: int = 50) -> dict:
     """
     Find all places where a symbol is referenced (used) in the codebase.
@@ -663,7 +681,7 @@ async def search_usages(symbol_name: str, limit: int = 50) -> dict:
     return await _get("/search/usages", symbol_name=symbol_name, limit=limit)
 
 
-@mcp.tool()
+# @mcp.tool()
 async def get_docstring(symbol_name: str, file: str | None = None) -> dict:
     """
     Retrieve docstrings for a symbol, optionally filtered by file.
@@ -675,7 +693,7 @@ async def get_docstring(symbol_name: str, file: str | None = None) -> dict:
     return await _get("/search/docstring", symbol_name=symbol_name, file=file)
 
 
-@mcp.tool()
+# @mcp.tool()
 async def read_file(file: str) -> dict:
     """
     Read full content of a file relative to the indexed repo path.
@@ -686,7 +704,7 @@ async def read_file(file: str) -> dict:
     return await _get("/search/file-read", file=file)
 
 
-@mcp.tool()
+# @mcp.tool()
 async def sandbox_status() -> dict:
     """
     Return Docker availability and detected stack for the current repo.
@@ -695,7 +713,7 @@ async def sandbox_status() -> dict:
     return await _get("/sandbox/status")
 
 
-@mcp.tool()
+# @mcp.tool()
 async def stop_sandbox(stack: str) -> dict:
     """
     Stop and remove a specific sandbox container.
@@ -706,7 +724,7 @@ async def stop_sandbox(stack: str) -> dict:
     return await _delete("/sandbox/stop", params={"stack": stack})
 
 
-@mcp.tool()
+# @mcp.tool()
 async def list_workspace() -> dict:
     """
     List subdirectories inside /workspace that look like repos.
@@ -717,7 +735,7 @@ async def list_workspace() -> dict:
 
 # ── New Feature Tools ────────────────────────────────────────────────────────
 
-@mcp.tool()
+# @mcp.tool()
 async def get_blast_radius(symbol_name: str) -> dict:
     """
     Get the PRECOMPUTED full blast radius for a symbol — every function that
@@ -731,7 +749,7 @@ async def get_blast_radius(symbol_name: str) -> dict:
     return await _get("/search/blast-radius", symbol=symbol_name)
 
 
-@mcp.tool()
+# @mcp.tool()
 async def get_error_context(error_message: str, file: str, line: int) -> dict:
     """
     Given a compiler, linter, or runtime error, return a pre-packaged diagnostic
@@ -754,36 +772,36 @@ async def get_error_context(error_message: str, file: str, line: int) -> dict:
     return await _get("/search/error-context", error=error_message, file=file, line=line)
 
 
-@mcp.tool()
-async def get_function_history(symbol_name: str, limit: int = 20) -> dict:
-    """
-    Return the precomputed git commit history for a specific function or class.
-    Each entry is a compact record: commit hash, date, message, and change type
-    (signature_change | logic_edit | new | deleted).
-
-    Use this INSTEAD of running raw git log commands, which burn 10,000+ tokens.
-    This returns a 150-token summary of the function's full change history.
-
-    Args:
-        symbol_name: The exact function or class name.
-        limit: Maximum number of commits to return (default 20).
-    """
-    log.info("[get_function_history] symbol=%s limit=%d", symbol_name, limit)
-    return await _get("/search/function-history", symbol=symbol_name, limit=limit)
-
-
-@mcp.tool()
-async def index_git_history() -> dict:
-    """
-    Trigger indexing of the git commit history for the current repository.
-    Must be called once after /reindex before get_function_history works.
-    Processes the last 200 commits. Run in the background (takes ~5-30 seconds).
-    """
-    log.info("[index_git_history] Triggering git history indexing")
-    return await _post("/git-index", {})
+# @mcp.tool()
+# async def get_function_history(symbol_name: str, limit: int = 20) -> dict:
+#     """
+#     Return the precomputed git commit history for a specific function or class.
+#     Each entry is a compact record: commit hash, date, message, and change type
+#     (signature_change | logic_edit | new | deleted).
+#
+#     Use this INSTEAD of running raw git log commands, which burn 10,000+ tokens.
+#     This returns a 150-token summary of the function's full change history.
+#
+#     Args:
+#         symbol_name: The exact function or class name.
+#         limit: Maximum number of commits to return (default 20).
+#     """
+#     log.info("[get_function_history] symbol=%s limit=%d", symbol_name, limit)
+#     return await _get("/search/function-history", symbol=symbol_name, limit=limit)
 
 
-@mcp.tool()
+# @mcp.tool()
+# async def index_git_history() -> dict:
+#     """
+#     Trigger indexing of the git commit history for the current repository.
+#     Must be called once after /reindex before get_function_history works.
+#     Processes the last 200 commits. Run in the background (takes ~5-30 seconds).
+#     """
+#     log.info("[index_git_history] Triggering git history indexing")
+#     return await _post("/git-index", {})
+
+
+# @mcp.tool()
 async def trace_endpoint_flow(entry_point: str, max_depth: int = 8) -> dict:
     """
     Trace the complete execution path from an entry point (API route handler,
@@ -805,7 +823,7 @@ async def trace_endpoint_flow(entry_point: str, max_depth: int = 8) -> dict:
     return await _get("/search/endpoint-flow", entry=entry_point, max_depth=max_depth)
 
 
-@mcp.tool()
+# @mcp.tool()
 async def setup_sandbox() -> dict:
     """
     Detect the project stack and start a Docker sandbox container.
@@ -819,7 +837,7 @@ async def setup_sandbox() -> dict:
     return await _post("/sandbox/setup", {})
 
 
-@mcp.tool()
+# @mcp.tool()
 async def check_syntax(file: str) -> dict:
     """
     Lint a single file inside the Docker sandbox using the stack's native linter.
@@ -840,7 +858,7 @@ async def check_syntax(file: str) -> dict:
     return await _get("/sandbox/lint", file=file)
 
 
-@mcp.tool()
+# @mcp.tool()
 async def compile_project() -> dict:
     """
     Compile the entire project inside the Docker sandbox.
@@ -855,7 +873,7 @@ async def compile_project() -> dict:
     return await _post("/sandbox/compile", {})
 
 
-@mcp.tool()
+# @mcp.tool()
 async def run_tests(test_path: str | None = None) -> dict:
     """
     Run the project's test suite inside the Docker sandbox.
@@ -872,7 +890,7 @@ async def run_tests(test_path: str | None = None) -> dict:
     return await _post("/sandbox/test", {"path": test_path} if test_path else {})
 
 
-@mcp.tool()
+# @mcp.tool()
 async def install_deps() -> dict:
     """
     Reinstall all dependencies (system packages + project deps) inside the Docker sandbox.
@@ -1034,91 +1052,26 @@ TOOLS_DOCS = {
             }
         },
         "editing": {
-            "preview_edit": {
-                "description": "Stage a code edit and preview it as a unified diff WITHOUT writing to disk.",
-                "params": {"file": "string", "old_code": "string", "new_code": "string"},
-                "token_cost": "~100-200 tokens",
-                "use_when": "Before applying any edit, to verify correctness",
-                "tradeoff": "Always call before apply_edit. Returns edit_id."
-            },
-            "apply_edit": {
-                "description": "Write a previewed edit to disk and automatically create a git commit.",
-                "params": {"edit_id": "string (from preview_edit)"},
-                "token_cost": "~50-100 tokens",
-                "use_when": "After preview_edit confirms the change",
-                "tradeoff": "Creates a git commit. Use undo_edit to revert if needed."
-            },
             "preview_smart_edit": {
                 "description": "Preview a smart block-based code edit as a unified diff WITHOUT writing to disk.",
                 "params": {"file": "string", "new_code": "string"},
                 "token_cost": "~100-200 tokens",
                 "use_when": "Replacing entire blocks (functions, classes) with new code",
-                "tradeoff": "Auto-detects which block to replace. More intelligent than preview_edit."
+                "tradeoff": "Auto-detects which block to replace."
             },
             "apply_smart_edit": {
                 "description": "Apply a smart edit preview to disk and create a git commit.",
                 "params": {"edit_id": "string (from preview_smart_edit)"},
                 "token_cost": "~50-100 tokens",
                 "use_when": "After preview_smart_edit confirms the change",
-                "tradeoff": "Creates a git commit. Use undo_edit to revert if needed."
+                "tradeoff": "Creates a git commit."
             },
-            "undo_edit": {
-                "description": "Revert the last applied edit by running git revert HEAD.",
-                "params": {},
-                "token_cost": "~50-100 tokens",
-                "use_when": "When an edit breaks things or is wrong",
-                "tradeoff": "Creates a new revert commit. Does not delete history."
-            }
-        },
-        "sandbox": {
-            "setup_sandbox": {
-                "description": "Detect the project stack and start a Docker sandbox container with deps installed.",
-                "params": {},
-                "token_cost": "~100-200 tokens",
-                "use_when": "Before running check_syntax, compile_project, or run_tests",
-                "tradeoff": "Idempotent. Safe to call multiple times."
-            },
-            "sandbox_status": {
-                "description": "Return Docker availability and detected stack for the current repo.",
-                "params": {},
-                "token_cost": "~50-100 tokens",
-                "use_when": "Checking if sandbox is ready before other sandbox operations",
-                "tradeoff": "Quick check of Docker and stack detection."
-            },
-            "check_syntax": {
-                "description": "Lint a single file inside the Docker sandbox using the stack's native linter.",
-                "params": {"file": "string (required, relative path)"},
-                "token_cost": "~100-300 tokens",
-                "use_when": "Linting a file, finding syntax errors",
-                "tradeoff": "Returns structured errors only — never raw linter output."
-            },
-            "compile_project": {
-                "description": "Compile the entire project inside the Docker sandbox.",
-                "params": {},
-                "token_cost": "~100-300 tokens",
-                "use_when": "Full project compilation check",
-                "tradeoff": "Returns structured errors with file, line, column, and message."
-            },
-            "run_tests": {
-                "description": "Run the project's test suite inside the Docker sandbox.",
-                "params": {"test_path": "string (optional, relative path to specific test file or dir)"},
-                "token_cost": "~150-400 tokens",
-                "use_when": "Running tests, checking test results",
-                "tradeoff": "Returns structured summary: total, passed, failed, and failure details."
-            },
-            "install_deps": {
-                "description": "Reinstall all dependencies (system packages + project deps) inside the Docker sandbox.",
-                "params": {},
-                "token_cost": "~100-200 tokens",
-                "use_when": "When deps are stale or container was rebuilt",
-                "tradeoff": "Call setup_sandbox() first if not already done."
-            },
-            "stop_sandbox": {
-                "description": "Stop and remove a specific sandbox container.",
-                "params": {"stack": "string (required, python|node|java-maven|java-gradle|go|rust|ruby|php|cpp)"},
-                "token_cost": "~50-100 tokens",
-                "use_when": "Cleaning up sandbox containers",
-                "tradeoff": "Permanently removes the container."
+            "get_edit_context": {
+                "description": "Get all structured context required to edit a symbol without reading the whole file.",
+                "params": {"symbol": "string (required)", "file": "string", "dir": "string", "package": "string"},
+                "token_cost": "~150-300 tokens",
+                "use_when": "Before editing a function/class, understanding its context",
+                "tradeoff": "Returns source, callers, callees, imports in one call."
             }
         }
     },
@@ -1126,9 +1079,8 @@ TOOLS_DOCS = {
         "recommended": [
             "1. Use get_index or search_symbol to locate symbols",
             "2. Use get_edit_context to understand the symbol before editing",
-            "3. Use preview_edit or preview_smart_edit to stage changes",
-            "4. Use apply_edit or apply_smart_edit to commit",
-            "5. Use undo_edit if the change breaks things"
+            "3. Use preview_smart_edit to stage changes",
+            "4. Use apply_smart_edit to commit"
         ],
         "token_optimization": [
             "Use extract_function/extract_class instead of reading full files",
@@ -1145,7 +1097,7 @@ TOOLS_DOCS = {
             "rule_of_thumb": "Use native tools for file finding and simple text search. Use MCP for AST extraction, call graph analysis, dependency tracing, and structured context."
         },
         "token_costs": {
-            "cheap": ["get_defined_symbols (~50-80)", "get_signature (~30-80)", "find_file (~50-100)", "get_imports (~50-100)", "extract_function (~50-150)", "count_references (~100-300)", "search_symbol (~100-300)"],
+            "cheap": ["get_defined_symbols (~50-80)", "get_signature (~30-80)", "find_file (~50-100)", "get_imports (~50-100)", "extract_function (~50-150)", "count_references (~100-300)", "search_symbol (~50-100)"],
             "moderate": ["search_code (~300-500)", "get_edit_context (~200-500)", "get_callers (~200-500)", "get_callees (~200-500)", "get_body (~200-500)", "get_importers (~200-500)", "get_file_deps (~300-600)", "get_index (~200-500)", "get_overview (~200-500)"],
             "expensive": ["trace_execution (~500-1000)", "impact_analysis (~500-1000)", "extract_class (~100-300 for small, 500+ for large)"]
         }
@@ -1153,7 +1105,7 @@ TOOLS_DOCS = {
 }
 
 
-@mcp.tool()
+# @mcp.tool()
 async def get_tools_docs() -> dict:
     """
     Get comprehensive documentation about all MCP tools, their capabilities, and tradeoffs.
@@ -1174,7 +1126,7 @@ async def get_tools_docs() -> dict:
 
 # ── Embedding Tools ────────────────────────────────────────────────────────
 
-@mcp.tool()
+# @mcp.tool()
 async def embedding_status() -> dict:
     """
     Get current embedding status.
@@ -1186,7 +1138,7 @@ async def embedding_status() -> dict:
     return await _get("/search/embedding-status")
 
 
-@mcp.tool()
+# @mcp.tool()
 async def toggle_embeddings(enabled: bool) -> dict:
     """
     Enable or disable embedding generation.
@@ -1217,7 +1169,7 @@ async def semantic_search(query: str, limit: int = 10) -> dict:
     return await _get("/search/semantic", q=query, limit=limit)
 
 
-@mcp.tool()
+# @mcp.tool()
 async def find_similar_functions(symbol_name: str, file: str | None = None, limit: int = 5) -> dict:
     """
     Find functions with similar behavior by embedding distance.

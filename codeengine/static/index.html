@@ -15,6 +15,12 @@
   <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/highlightjs-line-numbers.js/2.8.0/highlightjs-line-numbers.min.js"></script>
 
+  <!-- xterm.js — terminal emulator -->
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/xterm@5.3.0/css/xterm.min.css" />
+  <script src="https://cdn.jsdelivr.net/npm/xterm@5.3.0/lib/xterm.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/xterm-addon-fit@0.8.0/lib/xterm-addon-fit.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/xterm-addon-web-links@0.9.0/lib/xterm-addon-web-links.min.js"></script>
+
   <!-- CodeMirror 5 — syntax-highlighted code editors -->
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/codemirror.min.css" />
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/theme/dracula.min.css" />
@@ -78,11 +84,13 @@
         <span class="nav-icon">🧠</span> Semantic Search
       </div>
 
+      <!--
       <div class="separator"></div>
       <div class="nav-section-label">Edit</div>
       <div class="nav-item" data-page="edit" id="nav-edit">
         <span class="nav-icon">✏️</span> Code Edit
       </div>
+      -->
 
       <div class="separator"></div>
       <div class="nav-section-label">Analysis</div>
@@ -110,9 +118,11 @@
       <div class="nav-item" data-page="trace" id="nav-trace">
         <span class="nav-icon">🔀</span> Trace Execution
       </div>
+      <!--
       <div class="nav-item" data-page="history" id="nav-history">
         <span class="nav-icon">📜</span> Function History
       </div>
+      -->
       <div class="nav-item" data-page="similar" id="nav-similar">
         <span class="nav-icon">🧬</span> Similar Functions
       </div>
@@ -122,8 +132,13 @@
 
       <div class="separator"></div>
       <div class="nav-section-label">Tooling</div>
+      <!--
       <div class="nav-item" data-page="build" id="nav-build">
         <span class="nav-icon">🔨</span> Build / Test
+      </div>
+      -->
+      <div class="nav-item" data-page="terminal" id="nav-terminal">
+        <span class="nav-icon">💻</span> Terminal
       </div>
 
       <div class="sidebar-spacer"></div>
@@ -244,7 +259,7 @@
         </div>
       </section>
 
-      <!-- ════ EDIT PAGE ════ -->
+      <!--
       <section class="page" id="page-edit">
         <div class="page-header">
           <div class="page-title">✏️ Code Edit</div>
@@ -253,18 +268,14 @@
               <span class="search-icon">📄</span>
               <input id="edit-file" type="text" placeholder="Relative file path (e.g. codeengine/app.py)" />
             </div>
-            <!-- Mode toggle -->
             <div class="mode-toggle" id="edit-mode-toggle">
               <button class="mode-btn active" id="mode-btn-single" data-mode="single">Single</button>
               <button class="mode-btn" id="mode-btn-multi" data-mode="multi">Multi-Block</button>
             </div>
           </div>
         </div>
-
-        <!-- ─── SINGLE MODE (original editor) ─── -->
         <div id="single-edit-wrap" style="display:flex; flex-direction:column; flex:1; overflow:hidden;">
           <div class="edit-grid">
-            <!-- Old code pane -->
             <div class="edit-pane" id="pane-old">
               <div class="pane-toolbar">
                 <span class="pane-label">Old Code (to replace)</span>
@@ -273,7 +284,6 @@
               </div>
               <textarea class="code-textarea" id="edit-old" placeholder="Paste the exact existing code block you want to replace…"></textarea>
             </div>
-            <!-- New code pane -->
             <div class="edit-pane" id="pane-new">
               <div class="pane-toolbar">
                 <span class="pane-label">New Code (replacement)</span>
@@ -282,7 +292,6 @@
               </div>
               <textarea class="code-textarea" id="edit-new" placeholder="Paste your new replacement code…"></textarea>
             </div>
-            <!-- Diff pane -->
             <div class="edit-pane" style="grid-column:1/-1">
               <div class="pane-toolbar">
                 <span class="pane-label">Unified Diff Preview</span>
@@ -301,79 +310,79 @@
             <button class="btn btn-danger" id="edit-undo-btn">↩ Undo Last</button>
           </div>
         </div>
-
-        <!-- ─── MULTI-BLOCK MODE ─── -->
         <div id="multi-block-area" style="display:none;">
-          <!-- Paste zone -->
           <div id="mb-paste-zone">
             <textarea id="mb-paste-input" placeholder="Paste new/updated code here (multiple functions, classes, imports…). Hit Parse to split into blocks."></textarea>
             <button id="mb-parse-btn">⚡ Parse</button>
           </div>
-
-          <!-- Status + apply-all -->
           <div id="mb-status-bar" style="display:none">
             <span>Blocks detected:</span>
             <span class="mb-count" id="mb-block-count">0</span>
             <span id="mb-status-msg"></span>
             <button id="mb-apply-all-btn" disabled>✅ Apply All</button>
           </div>
-
-          <!-- Stacked block windows -->
           <div id="mb-blocks-stack"></div>
         </div>
       </section>
+      -->
 
-      <!-- ════ BUILD PAGE ════ -->
+      <!--
       <section class="page" id="page-build">
         <div class="page-header">
           <div class="page-title">🔨 Build / Test / Lint</div>
         </div>
-
-        <!-- Action cards -->
+        <div class="build-sandbox-bar">
+          <span id="sandbox-status-text" style="color:var(--text-secondary)">Detecting stack…</span>
+          <span id="sandbox-container-status" style="margin-left:12px;font-size:12px;color:var(--text-muted)"></span>
+          <button class="btn btn-sm" id="sandbox-status-btn">Refresh</button>
+          <button class="btn btn-sm btn-primary" id="sandbox-setup-btn">Setup Sandbox</button>
+          <button class="btn btn-sm" id="sandbox-deps-btn">Install Deps</button>
+        </div>
         <div class="build-grid">
           <div class="build-card">
             <div class="build-card-icon">🏗</div>
             <div class="build-card-title">Build</div>
             <div class="build-card-desc">Compile or build the project inside a worker container.</div>
-            <select class="build-lang-select" id="build-lang-build">
-              <option value="python">Python</option>
-              <option value="javascript">JavaScript</option>
-              <option value="java">Java</option>
-              <option value="go">Go</option>
-              <option value="rust">Rust</option>
-            </select>
-            <button class="btn btn-primary" id="build-run-btn">Run Build</button>
+            <button class="btn btn-primary" id="compile-run-btn">Run Build</button>
           </div>
           <div class="build-card">
             <div class="build-card-icon">🧪</div>
             <div class="build-card-title">Test</div>
             <div class="build-card-desc">Execute the full test suite inside the container.</div>
-            <select class="build-lang-select" id="build-lang-test">
-              <option value="python">Python</option>
-              <option value="javascript">JavaScript</option>
-              <option value="java">Java</option>
-              <option value="go">Go</option>
-              <option value="rust">Rust</option>
-            </select>
+            <input id="test-path" type="text" placeholder="Optional: specific test file/dir" style="width:100%;margin-bottom:6px" />
             <button class="btn btn-primary" id="test-run-btn">Run Tests</button>
           </div>
           <div class="build-card">
             <div class="build-card-icon">🔎</div>
             <div class="build-card-title">Lint</div>
             <div class="build-card-desc">Run the linter to check code quality and style.</div>
-            <select class="build-lang-select" id="build-lang-lint">
-              <option value="python">Python</option>
-              <option value="javascript">JavaScript</option>
-              <option value="java">Java</option>
-              <option value="go">Go</option>
-              <option value="rust">Rust</option>
-            </select>
+            <input id="lint-file" type="text" placeholder="File path to lint (e.g. src/main.py)" style="width:100%;margin-bottom:6px" />
             <button class="btn btn-primary" id="lint-run-btn">Run Lint</button>
           </div>
         </div>
-
         <div class="output-pane">
           <div id="build-output"><span style="color:var(--text-muted)">Output will appear here…</span></div>
+        </div>
+      </section>
+      -->
+
+      <!-- ════ TERMINAL PAGE ════ -->
+      <section class="page" id="page-terminal">
+        <div class="page-header">
+          <div class="page-title">💻 Terminal</div>
+          <div class="search-row" style="gap:8px; align-items:center;">
+            <div class="mode-toggle" id="terminal-mode-toggle">
+              <button class="mode-btn active" data-mode="sandbox">🐳 Sandbox</button>
+              <button class="mode-btn" data-mode="local">🖥 Local</button>
+            </div>
+            <span id="terminal-mode-label" style="font-size:11px; color:var(--text-muted); margin-left:4px;">Running in Docker container</span>
+            <div style="flex:1"></div>
+            <button class="btn btn-sm" id="terminal-clear-btn">🗑 Clear</button>
+            <button class="btn btn-sm" id="terminal-reset-btn">↻ Reset</button>
+          </div>
+        </div>
+        <div class="terminal-wrap" id="terminal-wrap">
+          <div id="xterm-container"></div>
         </div>
       </section>
 
@@ -508,10 +517,19 @@
       <section class="page" id="page-function-extract">
         <div class="page-header">
           <div class="page-title">⚡ Function Extract</div>
+          <!-- Name search row -->
           <div class="search-row">
             <div class="search-input-wrap" style="flex:2">
+              <span class="search-icon">🔣</span>
+              <input id="fe-name" type="text" placeholder="Function or class name (e.g. get_function_body)" />
+            </div>
+            <button class="btn btn-primary" id="fe-find-btn">Find</button>
+          </div>
+          <!-- File + line range row (auto-filled or manual) -->
+          <div class="search-row" style="margin-top:8px">
+            <div class="search-input-wrap" style="flex:2">
               <span class="search-icon">📄</span>
-              <input id="fe-file" type="text" placeholder="Relative file path (e.g. codeengine/app.py)" />
+              <input id="fe-file" type="text" placeholder="File path (auto-filled after Find)" />
             </div>
             <div class="search-input-wrap">
               <span class="search-icon">📍</span>
@@ -531,7 +549,7 @@
           <div class="empty-state">
             <div class="empty-icon">⚡</div>
             <div class="empty-title">Function Extraction</div>
-            <div class="empty-sub">Enter file path and line range, or click a symbol from search results to auto-fill.</div>
+            <div class="empty-sub">Search by name above, or enter file path and line range manually.</div>
           </div>
         </div>
       </section>
@@ -584,7 +602,7 @@
         </div>
       </section>
 
-      <!-- ════ FUNCTION HISTORY PAGE ════ -->
+      <!--
       <section class="page" id="page-history">
         <div class="page-header">
           <div class="page-title">📜 Function History</div>
@@ -609,6 +627,7 @@
           </div>
         </div>
       </section>
+      -->
 
       <!-- ════ SIMILAR FUNCTIONS PAGE ════ -->
       <section class="page" id="page-similar">
@@ -721,5 +740,6 @@
 </div>
 
 <script src="static/static.js"></script>
+<script src="static/terminal.js"></script>
 </body>
 </html>

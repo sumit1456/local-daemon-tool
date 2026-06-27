@@ -5,13 +5,19 @@
 >
 > **CRITICAL PERFORMANCE RULE (Token Budget)**:
 > * **DO NOT** use `search_code` for broad queries (e.g. "bbox", "config"). It returns raw JSON which consumes 10x-15x more tokens than native `grep_search`.
-> * **DO** use MCP tools for targeted AST extraction (`extract_function`, `extract_class`) and safe editing (`preview_edit`/`apply_edit`/`undo_edit`).
+> * **DO** use MCP tools for targeted AST extraction (`extract_function`, `extract_class`) and safe editing (`preview_smart_edit`/`apply_smart_edit`).
 >
-> **`get_index` AND `get_overview` — SAFE WITHOUT FILTERS**:
-> * Calling `get_index()` or `get_overview()` **without filters** returns a **compact summary** (~200 tokens): total files, symbols, languages, top dirs, top files.
+> **`get_index` — SAFE WITHOUT FILTERS**:
+> * Calling `get_index()` **without filters** returns a **compact summary** (~200 tokens): total files, symbols, languages, top dirs, top files.
 > * Use filters (`dir`, `package`, `files`) to zoom into a specific area for detailed results (~500-3000 tokens).
 > * Good: `get_index(package="codeengine/core")` — detailed file list for that package
 > * Good: `get_index()` — quick repo summary, safe to call freely
+>
+> **`get_overview` — REQUIRES FILTER**:
+> * `get_overview()` **without filters raises an error**. Always pass `dir`, `package`, `query`, or `files`.
+> * Returns compact format: flattened symbols per file + grouped call edges (~3KB for 10 files).
+> * Good: `get_overview(dir="codeengine/core")` — compact file listing + call graph
+> * Good: `get_overview(package="codeengine.api")` — zoom into a package
 
 ---
 
@@ -54,7 +60,7 @@ Add to your MCP client config (e.g. `claude_desktop_config.json`):
 | **Quick Function Overview** | MCP `get_signature` | ~30-50 tokens | Signature + docstring only |
 | **File Dependencies** | MCP `get_file_deps` | ~100-150 tokens | Both directions at once |
 | **Impact Before Change** | MCP `impact_analysis` | ~200-400 tokens | Full blast radius |
-| **Propose / Apply Edits** | MCP `preview_edit`/`apply_edit` | ~200-500 tokens | Auto git commit, safe diffs |
+| **Propose / Apply Edits** | MCP `preview_smart_edit`/`apply_smart_edit` | ~200-500 tokens | Auto git commit, safe diffs |
 | **Get Context to Edit a Symbol** | MCP `get_edit_context` | ~150-300 tokens | Get exact source, callers, callees, and imports of target symbol |
 
 ---
@@ -70,8 +76,9 @@ Add to your MCP client config (e.g. `claude_desktop_config.json`):
 | Tool | Description | Token Cost |
 |:-----|:------------|:-----------|
 | `search_code(query, path?, lang?, limit?)` | Ripgrep search. Use sparingly. | ~500+ |
-| `search_symbol(name, kind?)` | Find function/class definitions by name | ~100-300 |
+| `search_symbol(name, kind?)` | Find function/class definitions by name. Returns "name:kind:file:line_start-line_end" | ~50-100 |
 | `find_file(pattern, root?)` | Find files by name pattern | ~50-100 |
+| `search_usages(symbol_name, limit?)` | Find all references including imports, type annotations | ~200-500 |
 
 ### AST Extraction (Preferred for reading code)
 | Tool | Description | Token Cost |
@@ -85,9 +92,11 @@ Add to your MCP client config (e.g. `claude_desktop_config.json`):
 | Tool | Description | Token Cost |
 |:-----|:------------|:-----------|
 | `get_index(dir?, package?, limit?, offset?)` | File + symbol index. No filters = compact summary (~200 tokens). | ~200-3000 |
-| `get_overview(dir?, package?, limit?, offset?)` | Full overview with call graph. No filters = compact summary (~200 tokens). | ~200-5000 |
+| `get_overview(dir?, package?, query?, files?, limit?, offset?)` | Compact file listing + call graph. **Requires filter.** Returns flattened symbols and grouped edges (~3KB for 10 files). | ~200-3000 |
 | `get_callers(symbol_name)` | Who calls this function? | ~200-500 |
 | `get_callees(symbol_name)` | What does this function call? | ~200-500 |
+| `trace_execution(symbol_name, max_depth?)` | Trace call chain through the application | ~500-1000 |
+| `trace_endpoint_flow(entry_point, max_depth?)` | Trace complete execution path from entry point | ~200-400 |
 
 ### Dependency Intelligence
 | Tool | Description | Token Cost |
@@ -101,31 +110,29 @@ Add to your MCP client config (e.g. `claude_desktop_config.json`):
 |:-----|:------------|:-----------|
 | `get_type_info(symbol_name, file?)` | Parameter types and return type | ~30-50 |
 | `get_defined_symbols(file)` | What's defined in a file (functions, classes, etc.) | ~50-80 |
-| `count_references(symbol_name)` | How many times is this symbol used? | ~20-50 |
+| `count_references(symbol_name)` | How many times is this symbol used? | ~100-300 |
+| `get_blast_radius(symbol_name)` | Precomputed transitive blast radius | ~100-300 |
+| `get_error_context(error, file, line)` | Diagnostic bundle for compiler/linter errors | ~200-500 |
 
-### Impact Analysis & Tracing
+### Impact Analysis
 | Tool | Description | Token Cost |
 |:-----|:------------|:-----------|
-| `impact_analysis(symbol_name)` | Full impact — callers, references, affected files | ~200-400 |
-| `trace_execution(symbol_name, max_depth?)` | Trace call chain through the application | ~200-500 |
+| `impact_analysis(symbol_name)` | Full impact — callers, references, affected files | ~500-1000 |
 
-### Editing (Always preview before applying)
+### Editing (Smart block-based)
 | Tool | Description | Token Cost |
 |:-----|:------------|:-----------|
 | `get_edit_context(symbol, file?, dir?, package?)` | Get exact source, callers, callees, and imports for editing | ~150-300 |
-| `preview_edit(file, old_code, new_code)` | Stage an edit, returns diff + edit_id | ~200-500 |
-| `apply_edit(edit_id)` | Write edit to disk + auto git commit | ~50 |
-| `preview_smart_edit(file, new_code)` | Smart edit — engine detects what to replace | ~200-500 |
-| `apply_smart_edit(edit_id)` | Apply smart edit to disk + auto git commit | ~50 |
-| `undo_edit()` | Revert last edit (`git revert HEAD`) | ~50 |
-
-> **Note on undo**: `undo_edit` uses `git revert`. If an edit was the first commit for a new file, reverting deletes the file. The engine now auto-commits untracked files before the first edit to prevent this.
+| `preview_smart_edit(file, new_code)` | Smart edit — engine detects what to replace, returns diff + edit_id | ~200-500 |
+| `apply_smart_edit(edit_id)` | Apply smart edit to disk + auto git commit | ~50-100 |
 
 ### Code Analysis
 | Tool | Description | Token Cost |
 |:-----|:------------|:-----------|
 | `detect_snippet(code, file_hint?, lang_hint?)` | Locate a code snippet's origin | ~100-200 |
 | `parse_blocks(code, file_hint?, lang_hint?)` | Parse code into structural blocks | ~100-200 |
+| `read_file(file)` | Read full file content | ~100-500 |
+| `list_workspace` | List available repos in workspace | ~50-100 |
 
 ---
 
@@ -137,19 +144,20 @@ Add to your MCP client config (e.g. `claude_desktop_config.json`):
 
 ### Workflow B: Safe Code Modifications
 1. Read the method using `extract_function`.
-2. Generate the edit preview using `preview_edit`.
-3. Verify the diff, then apply using `apply_edit`.
-4. If tests fail, immediately call `undo_edit`.
+2. Get edit context using `get_edit_context` to understand callers/callees.
+3. Generate the smart edit preview using `preview_smart_edit`.
+4. Verify the diff, then apply using `apply_smart_edit`.
 
 ### Workflow C: Explore a module (scoped)
 1. Get module overview: `get_overview(package="codeengine/core")`
 2. Find callers: `get_callers("search_code")`
 3. Extract a function: `extract_function("codeengine/core/search_engine.py", "search_code")`
 
-### Workflow C2: Quick repo orientation (unfiltered)
+### Workflow C2: Quick repo orientation
 1. Get repo summary: `get_index()` — returns total files, languages, top dirs, top files (~200 tokens)
 2. Zoom into an area: `get_index(dir="codeengine/core")` — paginated file list
-3. Zoom into a file: `get_index(files=["search_engine.py"])` — file symbols
+3. Get call graph: `get_overview(dir="codeengine/core")` — compact file listing + call edges
+4. Zoom into a file: `get_index(files=["search_engine.py"])` — file symbols
 
 ### Workflow D: Full impact analysis before refactoring
 1. Count references: `count_references("create_user")`
@@ -166,7 +174,7 @@ Add to your MCP client config (e.g. `claude_desktop_config.json`):
 1. Call `get_edit_context(symbol="process_payment")` to fetch only the source, preamble, callers, callees, and imports of that symbol.
 2. If multiple candidates exist, repeat the call with the `file` param (e.g., `file="gateways/stripe.py"`).
 3. Construct replacement code.
-4. Preview using `preview_edit` or write edits as needed.
+4. Preview using `preview_smart_edit` and apply with `apply_smart_edit`.
 
 ---
 
@@ -188,7 +196,7 @@ Add to your MCP client config (e.g. `claude_desktop_config.json`):
 | **Read one class** | `extract_class` | Only the class block, not the whole file |
 | **Check dependencies** | `get_file_deps` | Both directions in one call |
 | **Impact before change** | `impact_analysis` | Full blast radius in one call |
-| **Apply safe edits** | `preview_edit` + `apply_edit` | Auto git commit, undo support |
+| **Apply safe edits** | `preview_smart_edit` + `apply_smart_edit` | Auto git commit |
 
 ### MCP Search Tools (Use Sparingly)
 | Tool | Token Cost | When to Use |

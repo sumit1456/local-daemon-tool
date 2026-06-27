@@ -1,4 +1,5 @@
 from fastapi import APIRouter, Query
+from pydantic import BaseModel
 from codeengine.core.sandbox_engine import (
     setup_sandbox, check_syntax, compile_project, run_tests,
     stop_sandbox, detect_stack, is_docker_available,
@@ -7,6 +8,60 @@ from codeengine.core.sandbox_engine import (
 import os
 
 router = APIRouter(prefix="/sandbox", tags=["sandbox"])
+
+
+class TerminalCommand(BaseModel):
+    command: str
+
+
+@router.post("/terminal/exec")
+async def terminal_exec_route(
+    cmd: TerminalCommand,
+    stack: str | None = Query(None, description="Stack name (auto-detected if omitted)"),
+):
+    """Execute a shell command inside the sandbox container. Returns stdout+stderr."""
+    repo = os.getenv("REPO_PATH", ".")
+    if not is_docker_available():
+        return {"success": False, "error": "Docker is not available."}
+
+    _stack = stack or detect_stack(repo)
+    if not _stack:
+        return {"success": False, "error": "Could not detect stack."}
+
+    try:
+        container = _get_or_start_container(_stack, repo)
+        exit_code, output = container.exec_run(
+            ["/bin/sh", "-c", cmd.command],
+            workdir="/repo"
+        )
+        output_str = output.decode("utf-8", errors="replace") if output else ""
+        return {"success": True, "exit_code": exit_code, "output": output_str, "stack": _stack}
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+
+@router.post("/terminal/exec-local")
+async def terminal_exec_local_route(cmd: TerminalCommand):
+    """Execute a shell command on the host machine (not in Docker). Returns stdout+stderr."""
+    import subprocess
+    try:
+        result = subprocess.run(
+            cmd.command,
+            shell=True,
+            capture_output=True,
+            text=True,
+            timeout=30,
+            cwd=os.getenv("REPO_PATH", "."),
+        )
+        return {
+            "success": True,
+            "exit_code": result.returncode,
+            "output": result.stdout + result.stderr,
+        }
+    except subprocess.TimeoutExpired:
+        return {"success": False, "error": "Command timed out (30s limit)."}
+    except Exception as e:
+        return {"success": False, "error": str(e)}
 
 
 @router.post("/setup")

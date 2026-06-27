@@ -32,7 +32,7 @@ async def search_code_route(
     matches = await search_code(q, path, lang, limit)
     return SearchResponse(matches=matches, total=len(matches), query=q)
 
-@router.get("/symbol", response_model=list[Symbol])
+@router.get("/symbol")
 async def search_symbol_route(
     name: str,
     kind: str | None = None,
@@ -176,6 +176,60 @@ async def get_function_body_route(file: str = Query(...), line_start: int = Quer
     except (FileNotFoundError, ValueError) as e:
         raise HTTPException(status_code=404 if isinstance(e, FileNotFoundError) else 400, detail=str(e))
 
+
+@router.get("/extract-by-name")
+async def extract_by_name_route(
+    name: str = Query(..., description="Function or class name to search for"),
+    kind: str | None = Query(None, description="Kind filter: function, class, method, interface"),
+    extract: str = Query("body", description="What to extract: signature, body, or both"),
+):
+    """Search for a symbol by name and extract its signature/body in one call."""
+    try:
+        matches = await search_symbol(name, kind=kind, limit=10)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+    if not matches:
+        raise HTTPException(status_code=404, detail=f"No symbol matching '{name}'.")
+
+    results = []
+    for match_str in matches:
+        parts = match_str.split(":")
+        sym_name = parts[0]
+        kind_char = parts[1]
+        file_path = ":".join(parts[2:-1])
+        lines = parts[-1].split("-")
+        line_start = int(lines[0])
+        line_end = int(lines[1])
+
+        kind_map = {"f": "function", "c": "class", "m": "method", "i": "interface"}
+        sym_kind = kind_map.get(kind_char, kind_char)
+
+        repo_root = Path(os.getenv("REPO_PATH", ".")).resolve()
+        full_path = str((repo_root / file_path).resolve())
+
+        entry = {
+            "name": sym_name,
+            "kind": sym_kind,
+            "file": file_path,
+            "line_start": line_start,
+            "line_end": line_end,
+        }
+
+        try:
+            if extract in ("signature", "both"):
+                sig_result = await get_function_signature(full_path, line_start, line_end)
+                entry["signature"] = sig_result.signature
+            if extract in ("body", "both"):
+                body_result = await get_function_body(full_path, line_start, line_end)
+                entry["body"] = body_result.body
+                entry["total_lines"] = body_result.total_lines
+        except Exception:
+            pass
+
+        results.append(entry)
+
+    return {"matches": results, "total": len(results)}
 
 @router.get("/usages")
 async def find_symbol_usages_route(symbol_name: str = Query(...), limit: int = Query(50)):

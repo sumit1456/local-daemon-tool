@@ -48,46 +48,32 @@ Daemon must be running:
 
 | Command | Args | Description |
 |:--------|:-----|:------------|
-| `index` | `[--files a.py b.py]` `[--dir src]` `[--package codeengine.core]` | File + symbol index. No filters = compact summary. |
-| `overview` | `[--files a.py b.py]` `[--dir src]` `[--package codeengine.core]` | Full overview with call graph. No filters = compact summary. |
-| `callers` | `"symbol_name"` `[--dir src]` `[--package codeengine.core]` | Who calls this function? |
-| `callees` | `"symbol_name"` `[--dir src]` `[--package codeengine.core]` | What does this function call? |
+| `index` | `[--files a.py b.py]` | File + symbol index. No filters = compact summary. |
+| `overview` | `[--files a.py b.py]` | Full overview with call graph. |
 
 ### Dependency Intelligence
 
 | Command | Args | Description |
 |:--------|:-----|:------------|
-| `imports` | `"file.py"` | All imports used by a file |
-| `importers` | `"module.name"` | Reverse dependency — who imports this |
-| `file-deps` | `"file.py"` | Full dependency picture (both directions) |
+| `callers` | `"symbol_name"` | Who calls this function? |
+| `callees` | `"symbol_name"` | What does this function call? |
 
 ### Type & Symbol Intelligence
 
 | Command | Args | Description |
 |:--------|:-----|:------------|
-| `type-info` | `"symbol_name"` `[--file x.py]` | Parameter types and return type |
-| `defined-symbols` | `"file.py"` | What's defined in a file |
-| `count-refs` | `"symbol_name"` | How many times is this symbol used? |
 
 ### Impact Analysis & Tracing
 
 | Command | Args | Description |
 |:--------|:-----|:------------|
-| `impact` | `"symbol_name"` | Full impact — callers, references, affected files |
-| `trace` | `"symbol_name"` `[--depth 5]` | Trace call chain through the application |
 
 ### Editing
 
 | Command | Args | Description |
 |:--------|:-----|:------------|
-| `edit-context` | `"symbol"` `[--file x.py]` `[--dir src]` `[--package codeengine.core]` | Get all context needed to edit a symbol |
-| `preview` | `"file.py" "old_code" "new_code"` | Preview edit as diff (no disk write) |
-| `apply` | `"edit_id"` | Apply previewed edit + git commit |
 | `preview-smart` | `"file.py" "new_code"` | Smart edit — engine detects what to replace |
 | `apply-smart` | `"edit_id"` | Apply smart edit + git commit |
-| `undo` | — | Revert last edit (`git revert HEAD`) |
-
-> **Note on undo**: `undo` uses `git revert`. If an edit was the first commit for a new file, reverting deletes the file. The engine now auto-commits untracked files before the first edit to prevent this.
 
 ### Code Analysis
 
@@ -110,32 +96,23 @@ Daemon must be running:
 # Extract function source
 .venv\Scripts\python.exe ce_cli.py function "codeengine/core/search_engine.py" search_code
 
-# Get edit context for a symbol
-.venv\Scripts\python.exe ce_cli.py edit-context search_code --package codeengine.core
-
 # Check what calls search_code
 .venv\Scripts\python.exe ce_cli.py callers search_code
 
-# Get full impact before refactoring
-.venv\Scripts\python.exe ce_cli.py impact search_code
+# Check what search_code calls
+.venv\Scripts\python.exe ce_cli.py callees search_code
 
-# Preview an edit
-.venv\Scripts\python.exe ce_cli.py preview "codeengine/app.py" "old code" "new code"
+# Preview a smart edit
+.venv\Scripts\python.exe ce_cli.py preview-smart "codeengine/app.py" "new code here"
 
 # Apply the edit
-.venv\Scripts\python.exe ce_cli.py apply "edit_id_here"
+.venv\Scripts\python.exe ce_cli.py apply-smart "edit_id_here"
 
-# Undo if tests fail
-.venv\Scripts\python.exe ce_cli.py undo
+# Detect code snippet origin
+.venv\Scripts\python.exe ce_cli.py detect "def search_code(query: str):"
 
-# Get file dependencies
-.venv\Scripts\python.exe ce_cli.py file-deps "codeengine/core/search_engine.py"
-
-# Count references
-.venv\Scripts\python.exe ce_cli.py count-refs search_code
-
-# Trace execution flow
-.venv\Scripts\python.exe ce_cli.py trace search_code --depth 3
+# Parse code into blocks
+.venv\Scripts\python.exe ce_cli.py parse-blocks "def hello(): pass"
 ```
 
 ---
@@ -143,17 +120,17 @@ Daemon must be running:
 ## Workflow: Safe Code Modification
 
 ```powershell
-# 1. Get context for the symbol
-.venv\Scripts\python.exe ce_cli.py edit-context "process_payment" --package gateways
+# 1. Find the function
+.venv\Scripts\python.exe ce_cli.py symbol process_payment --kind function
 
-# 2. Preview the edit
-.venv\Scripts\python.exe ce_cli.py preview "gateways/stripe.py" "old code" "new code"
+# 2. Extract the function
+.venv\Scripts\python.exe ce_cli.py function "gateways/stripe.py" process_payment
 
-# 3. Apply (auto git commit)
-.venv\Scripts\python.exe ce_cli.py apply "edit_id"
+# 3. Preview the smart edit
+.venv\Scripts\python.exe ce_cli.py preview-smart "gateways/stripe.py" "new code here"
 
-# 4. If tests fail, undo
-.venv\Scripts\python.exe ce_cli.py undo
+# 4. Apply (auto git commit)
+.venv\Scripts\python.exe ce_cli.py apply-smart "edit_id"
 ```
 
 ---
@@ -170,7 +147,7 @@ All commands return JSON to stdout. Errors go to stderr as JSON:
 *Code Search Engine CLI v2.0.0*
 
 ======================================================================
-⚠ WARNING: SLOWER THAN NATIVE TOOLS
+WARNING: SLOWER THAN NATIVE TOOLS
 The following CLI commands go through HTTP → FastAPI → ripgrep/AST.
 Use native tools first when possible — they are faster and cheaper.
 
@@ -182,5 +159,5 @@ Use native tools first when possible — they are faster and cheaper.
 
 **Rule of thumb**: If `grep` or `glob` can do it, use native. Only use CLI
 when you need AST-level precision (`function`, `class`, `signature`, `body`)
-or editing capabilities (`preview`, `apply`, `undo`, `edit-context`).
+or editing capabilities (`preview-smart`, `apply-smart`).
 ======================================================================
