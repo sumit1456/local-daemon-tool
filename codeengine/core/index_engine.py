@@ -125,6 +125,29 @@ import logging
 logger = logging.getLogger("codeengine.index")
 
 
+SKIP_DIRS = {
+    # VCS
+    ".git", ".svn", ".hg",
+    # Node / JS / React
+    "node_modules", ".next", ".nuxt", ".turbo", "coverage",
+    # Python
+    "__pycache__", ".venv", "venv", ".venv-mcp", ".pytest_cache",
+    ".mypy_cache", ".ruff_cache", ".tox", ".nox",
+    # Java / JVM
+    "target", "build", ".gradle", ".idea", "bin", "out",
+    # Rust
+    "target",
+    # Go
+    "vendor",
+    # Python packaging
+    "dist", ".eggs",
+    # IDE / Editor
+    ".vscode", ".vs", ".eclipse",
+    # OS / General
+    "tmp", "temp", "logs",
+}
+
+
 async def index_repo(root: str, on_progress=None) -> int:
     """
     Walk all files under root using pathlib.
