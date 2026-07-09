@@ -141,6 +141,27 @@ async def index_repo(root: str, on_progress=None) -> int:
     error_count = 0
 
     supported_extensions = set(LANG_MAP.keys())
+    skip_dirs = {
+        # VCS
+        ".git", ".svn", ".hg",
+        # Node / JS / React
+        "node_modules", ".next", ".nuxt", ".turbo", "coverage",
+        # Python
+        "__pycache__", ".venv", "venv", ".venv-mcp", ".pytest_cache",
+        ".mypy_cache", ".ruff_cache", ".tox", ".nox",
+        # Java / JVM
+        "target", "build", ".gradle", ".idea", "bin", "out",
+        # Rust
+        "target",
+        # Go
+        "vendor",
+        # Python packaging
+        "dist", ".eggs",
+        # IDE / Editor
+        ".vscode", ".vs", ".eclipse",
+        # OS / General
+        "tmp", "temp", "logs",
+    }
 
     async def emit(event_type, data=None):
         if on_progress:
@@ -310,28 +331,7 @@ async def reindex_file(path: str) -> None:
         root_path = Path(_watched_root).resolve()
         try:
             rel_parts = p.relative_to(root_path).parts
-            skip_dirs = {
-                # VCS
-                ".git", ".svn", ".hg",
-                # Node / JS / React
-                "node_modules", ".next", ".nuxt", ".turbo", "coverage",
-                # Python
-                "__pycache__", ".venv", "venv", ".venv-mcp", ".pytest_cache",
-                ".mypy_cache", ".ruff_cache", ".tox", ".nox",
-                # Java / JVM
-                "target", "build", ".gradle", ".idea", "bin", "out",
-                # Rust
-                "target",
-                # Go
-                "vendor",
-                # Python packaging
-                "dist", ".eggs",
-                # IDE / Editor
-                ".vscode", ".vs", ".eclipse",
-                # OS / General
-                "tmp", "temp", "logs",
-            }
-            if any(part in skip_dirs for part in rel_parts):
+            if any(part in SKIP_DIRS for part in rel_parts):
                 return
         except ValueError:
             return
