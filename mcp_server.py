@@ -1402,6 +1402,9 @@ async def build_tree(
         return lines
 
     path = Path(root)
+    if not path.is_absolute():
+        repo_root = Path(os.getenv("REPO_PATH", ".")).resolve()
+        path = (repo_root / root).resolve()
     if not path.is_dir():
         return {"error": f"Not a directory: {root}"}
 
