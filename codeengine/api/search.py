@@ -43,9 +43,10 @@ async def grep_code_route(
     limit: int = Query(50),
     context_lines: int = Query(0, description="lines of context around each match"),
     exclude_dirs: list[str] | None = Query(None, description="extra directory names to exclude"),
+    regex: bool = Query(False, description="treat query as a regex pattern instead of literal text"),
 ):
     """Search for matching patterns in files using ripgrep (aliased as grep_code)."""
-    matches = await search_code(q, path, lang, limit, context_lines, exclude_dirs=exclude_dirs)
+    matches = await search_code(q, path, lang, limit, context_lines, exclude_dirs=exclude_dirs, regex=regex)
     return SearchResponse(matches=matches, total=len(matches), query=q)
 
 @router.get("/symbol")
