@@ -1375,9 +1375,15 @@ async def build_tree(
     else:
         skip = _deps_dirs | _always_ignore
 
+    def _is_skipped(name: str) -> bool:
+        return any(
+            name == s or name.startswith(s + "-") or name.startswith(s + "_")
+            for s in skip
+        )
+
     def walk(dir_path: Path):
         entries = sorted(
-            [p for p in dir_path.iterdir() if p.name not in skip],
+            [p for p in dir_path.iterdir() if not _is_skipped(p.name)],
             key=lambda p: (p.is_file(), p.name.lower()),
         )
         return entries
