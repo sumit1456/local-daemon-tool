@@ -156,7 +156,89 @@ async def ping() -> dict:
         }
 
 
-# @mcp.tool()
+@mcp.tool()
+async def scan_codebase(
+    rulebook_path: str | None = None,
+    rules: list[dict] | None = None,
+    output_file: str | None = None,
+    list_rulebooks: bool = False,
+    exclude_dirs: list[str] | None = None,
+) -> dict:
+    """
+    Scan the currently mounted codebase for bugs using Semgrep.
+
+    Always runs asynchronously — returns immediately with the output file path.
+    Results are written as JSON to .code-scan/scan_TIMESTAMP.json inside the repo
+    (auto-created when output_file is not specified).
+
+    To read results: use read_file on the returned output_file path.
+
+    ── Semgrep Registry Configs (recommended, require internet) ──
+      - "auto"               Auto-detect language, apply best community rules
+      - "p/java"             Java security + quality pack
+      - "p/python"           Python pack
+      - "p/owasp-top-ten"    OWASP Top 10 security rules
+      - "p/r2c-security-audit" Broad security audit
+      - "p/secrets"          Hardcoded secrets detection
+      - "p/default"          Semgrep default recommended rules
+
+    ── Local YAML Rulebooks (offline, no account needed) ──
+      - "codeengine/rulebook/java/java-semgrep.yaml"
+      - "codeengine/rulebook/python/python-semgrep.yaml"
+
+    If no rulebook_path is given, the first local YAML under codeengine/rulebook/ is used.
+
+    Args:
+        rulebook_path: Registry config string (e.g. 'auto', 'p/java') OR
+                       absolute/repo-relative path to a local YAML rulebook.
+        output_file:   Where to write JSON results. Auto-created if omitted.
+        list_rulebooks: If True, lists available local rulebooks without scanning.
+        exclude_dirs:  Extra directory names to exclude from the scan.
+                       Merged with a built-in default list (node_modules, .venv, __pycache__, etc.).
+    """
+    if list_rulebooks:
+        repo_path = os.getenv("REPO_PATH", ".")
+        rulebook_dir = Path(repo_path) / "codeengine" / "rulebook"
+        if not rulebook_dir.is_dir():
+            rulebook_dir = Path(__file__).parent / "codeengine" / "rulebook"
+        
+        available = {}
+        if rulebook_dir.is_dir():
+            for lang_dir in sorted(rulebook_dir.iterdir()):
+                if lang_dir.is_dir():
+                    files = [f.name for f in lang_dir.iterdir() if f.suffix in (".json", ".yaml", ".yml")]
+                    if files:
+                        available[lang_dir.name] = {
+                            "path": str(lang_dir.relative_to(rulebook_dir.parent)),
+                            "semgrep": [f for f in files if f.endswith((".yaml", ".yml"))],
+                            "legacy_json": [f for f in files if f.endswith(".json")],
+                        }
+        
+        return {
+            "rulebook_dir": str(rulebook_dir),
+            "languages": available,
+            "usage": "Pass rulebook_path as 'codeengine/rulebook/<lang>/<file>.yaml' for Semgrep (recommended) or '.json' for legacy.",
+            "recommended": "Use Semgrep YAML rulebooks for AST-aware scanning with fewer false positives."
+        }
+    
+    log.info("[scan_codebase] Starting codebase scan...")
+    body: dict = {}
+    if rulebook_path:
+        body["rulebook_path"] = rulebook_path
+    if rules:
+        body["rules"] = rules
+    if output_file:
+        body["output_file"] = output_file
+    if exclude_dirs:
+        body["exclude_dirs"] = exclude_dirs
+    # If no output_file, backend auto-creates REPO_PATH/.code-scan/scan_TIMESTAMP.json
+
+    result = await _post("/scan", body)
+    # Always returns {"status": "running", "output_file": "<abs_path>"}
+    return result
+
+
+@mcp.tool()
 async def reindex(repo_path: str) -> dict:
     """
     Switch the daemon to index a different repository.
@@ -173,17 +255,30 @@ async def reindex(repo_path: str) -> dict:
     return result
 
 
-# @mcp.tool()
-async def search_code(
+@mcp.tool()
+async def index_repo(repo_path: str) -> dict:
+    """
+    Index a repository folder by clearing the previous index and scanning all files.
+
+    Args:
+        repo_path: Absolute path to the repository directory to index.
+    """
+    return await reindex(repo_path)
+
+
+@mcp.tool()
+async def grep_code(
     query: str,
     path: str = ".",
     lang: str | None = None,
     limit: int = 50,
+    context_lines: int = 0,
+    exclude_dirs: list[str] | None = None,
+    regex: bool = False,
 ) -> dict:
     """
     Search source code using ripgrep. Returns matching lines with file, line number, and snippet.
 
-    IMPORTANT: For broad queries, prefer the native grep_search tool — it is more token-efficient.
     Use this tool when you need ripgrep-specific filtering (language, path scoping, etc.).
 
     Args:
@@ -191,10 +286,15 @@ async def search_code(
         path: Root directory to search in (default: currently indexed repo).
         lang: Language filter — python | javascript | typescript | java | go | rust.
         limit: Maximum number of results to return (default: 50).
+        context_lines: Lines of context to include before/after each match (default: 0).
+        exclude_dirs: Extra directory names to exclude (e.g. ["tests", "migrations"]).
+                      Default exclusions (.venv, node_modules, __pycache__, etc.) always apply.
+        regex: If True, query is treated as a ripgrep regex pattern (., *, +, \\b, alternation,
+              character classes, etc). If False (default), query is matched literally.
     """
     if path == ".":
         path = await _get_repo_path()
-    data = await _get("/search/code", q=query, path=path, lang=lang, limit=limit)
+    data = await _get("/search/grep-code", q=query, path=path, lang=lang, limit=limit, context_lines=context_lines, exclude_dirs=exclude_dirs, regex=regex)
     return {
         "query": data["query"],
         "total": data["total"],
@@ -204,10 +304,13 @@ async def search_code(
                 "line": m["line"],
                 "col":  m["col"],
                 "text": m["text"].strip(),
+                "context_before": m.get("context_before", []),
+                "context_after":  m.get("context_after", []),
             }
             for m in data["matches"]
         ],
     }
+
 
 
 @mcp.tool()
@@ -294,43 +397,7 @@ async def extract_by_name(
     return await _get("/search/extract-by-name", name=name, kind=kind, extract=extract)
 
 
-# @mcp.tool()
-async def preview_edit(
-    file: str,
-    old_code: str,
-    new_code: str,
-) -> dict:
-    """
-    Stage a code edit and preview it as a unified diff WITHOUT writing to disk.
-    Always call this before apply_edit to verify the change is correct.
-
-    Args:
-        file: Relative path to the file to edit.
-        old_code: The exact code block to replace (must match verbatim).
-        new_code: The replacement code.
-
-    Returns an edit_id and a unified diff showing the proposed change.
-    """
-    return await _post("/preview-edit", {
-        "file":     file,
-        "old_code": old_code,
-        "new_code": new_code,
-    })
-
-
-# @mcp.tool()
-async def apply_edit(edit_id: str) -> dict:
-    """
-    Write a previewed edit to disk and automatically create a git commit.
-    You must call preview_edit first to get the edit_id.
-
-    Args:
-        edit_id: The edit_id returned by a previous preview_edit call.
-    """
-    return await _post("/apply-edit", {"edit_id": edit_id})
-
-
-# @mcp.tool()
+@mcp.tool()
 async def undo_edit() -> dict:
     """
     Revert the last applied edit by running `git revert HEAD`.
@@ -481,26 +548,34 @@ async def detect_snippet(
     })
 
 
-# @mcp.tool()
+@mcp.tool()
 async def preview_smart_edit(
     file: str,
+    old_code: str,
     new_code: str,
+    mode: str = "fuzzy",
 ) -> dict:
     """
-    Preview a smart block-based code edit as a unified diff WITHOUT writing to disk.
-    Automatically detects which block in the file the new_code is replacing.
+    Preview a smart code edit as a unified diff WITHOUT writing to disk.
+    Uses fuzzy string matching to find the old_code in the file, then shows
+    the diff with new_code applied.
 
     Args:
         file: Relative path to the file to edit.
-        new_code: The new code block to insert (the engine figures out what it replaces).
+        old_code: The exact text to find and replace (fuzzy matching supported).
+        new_code: The replacement text.
+        mode: "fuzzy" (default, opencode-style string matching) or
+               "ast" (tree-sitter block parsing with class-aware matching).
     """
     return await _post("/preview-smart-edit", {
         "file":     file,
+        "old_code": old_code,
         "new_code": new_code,
+        "mode":     mode,
     })
 
 
-# @mcp.tool()
+@mcp.tool()
 async def apply_smart_edit(edit_id: str) -> dict:
     """
     Apply a smart edit preview to disk and create a git commit.
@@ -512,7 +587,7 @@ async def apply_smart_edit(edit_id: str) -> dict:
     return await _post("/apply-smart-edit", {"edit_id": edit_id})
 
 
-# @mcp.tool()
+@mcp.tool()
 async def parse_blocks(
     code: str,
     file_hint: str | None = None,
@@ -691,17 +766,6 @@ async def get_docstring(symbol_name: str, file: str | None = None) -> dict:
         file: Optional file path filter to narrow results.
     """
     return await _get("/search/docstring", symbol_name=symbol_name, file=file)
-
-
-# @mcp.tool()
-async def read_file(file: str) -> dict:
-    """
-    Read full content of a file relative to the indexed repo path.
-
-    Args:
-        file: Relative path to the file (e.g. "codeengine/app.py").
-    """
-    return await _get("/search/file-read", file=file)
 
 
 # @mcp.tool()
@@ -909,33 +973,12 @@ TOOLS_DOCS = {
     "description": "Complete documentation of all available MCP tools, their capabilities, and tradeoffs.",
     "tools": {
         "search": {
-            "search_code": {
-                "description": "Search source code using ripgrep. Returns matching lines with file, line number, and snippet.",
-                "params": {"q": "string (required)", "path": "string (default: '.')", "lang": "python|javascript|typescript|java|go|rust", "limit": "int (default: 50)"},
-                "token_cost": "~300-500 tokens",
-                "use_when": "Finding text patterns, function names, variable references, string literals",
-                "tradeoff": "Slower than native grep due to HTTP overhead, but integrates with other tools for context."
-            },
             "search_symbol": {
                 "description": "Search AST symbol index for functions, classes, methods by name. Returns compact format: name:kind:file:line_start-line_end. Agent can call extract_function directly on results.",
                 "params": {"name": "string (required)", "kind": "function|class|method|interface"},
                 "token_cost": "~50-100 tokens",
                 "use_when": "Finding exact symbol definitions, locating where a function/class is defined",
-                "tradeoff": "AST-aware (kind + line ranges). Requires indexed repo. For simple grep, use native search_code."
-            },
-            "find_file": {
-                "description": "Find files by name pattern using fd.",
-                "params": {"pattern": "string (glob pattern)", "root": "string (default: '.')"},
-                "token_cost": "~50-100 tokens",
-                "use_when": "Locating files by name, finding config files, finding test files",
-                "tradeoff": "Slower than native fd/glob, but useful when combined with other MCP tools."
-            },
-            "get_index": {
-                "description": "Get file and symbol index for the repository. Cheap — no file reads.",
-                "params": {"files": "list of strings", "dir": "directory prefix filter", "package": "package path filter", "q": "substring match on file path", "limit": "int (default: 50)", "offset": "int (default: 0)"},
-                "token_cost": "~200-500 tokens",
-                "use_when": "Getting overview of repo structure, finding files by directory, pagination",
-                "tradeoff": "Good for scoped searches. Use for initial exploration."
+                "tradeoff": "AST-aware (kind + line ranges). Requires indexed repo."
             },
             "get_overview": {
                 "description": "Get compact file listing + call graph edges. Requires at least one filter (dir, package, query, or files). Returns flattened symbols and grouped edges (~3KB for 10 files).",
@@ -959,43 +1002,22 @@ TOOLS_DOCS = {
                 "token_cost": "~100-300 tokens",
                 "use_when": "Reading a specific class without reading the whole file",
                 "tradeoff": "May be large for complex classes. Consider using get_edit_context for structured view."
-            },
-            "get_signature": {
-                "description": "Get only the signature and docstring of a function — NOT the full body.",
-                "params": {"file": "string", "line_start": "int", "line_end": "int"},
-                "token_cost": "~30-80 tokens",
-                "use_when": "Understanding function API without implementation details",
-                "tradeoff": "Cheapest way to understand what a function does."
-            },
-            "get_body": {
-                "description": "Get full function body by line range (no surrounding noise).",
-                "params": {"file": "string", "line_start": "int", "line_end": "int"},
-                "token_cost": "~200-500 tokens",
-                "use_when": "Reading function implementation after locating it",
-                "tradeoff": "Requires knowing line numbers. Use extract_function if you know the name."
             }
         },
         "call_graph": {
             "get_callers": {
                 "description": "Find all functions that call the given symbol.",
-                "params": {"symbol_name": "string (required)", "file": "string", "dir": "string", "package": "string"},
+                "params": {"symbol_name": "string (required)"},
                 "token_cost": "~200-500 tokens",
                 "use_when": "Understanding who depends on a function, blast radius analysis",
                 "tradeoff": "Essential for impact analysis. Use before modifying critical functions."
             },
             "get_callees": {
                 "description": "Find all functions called by the given symbol.",
-                "params": {"symbol_name": "string (required)", "file": "string", "dir": "string", "package": "string"},
+                "params": {"symbol_name": "string (required)"},
                 "token_cost": "~200-500 tokens",
                 "use_when": "Understanding function dependencies, what a function relies on",
                 "tradeoff": "Use with get_callers for full call graph picture."
-            },
-            "trace_execution": {
-                "description": "Trace execution flow through the application from a given symbol.",
-                "params": {"symbol_name": "string (required)", "max_depth": "int (default: 5)"},
-                "token_cost": "~500-1000 tokens",
-                "use_when": "Understanding call chains, debugging execution flow",
-                "tradeoff": "Expensive but invaluable for complex debugging."
             }
         },
         "dependencies": {
@@ -1028,27 +1050,6 @@ TOOLS_DOCS = {
                 "token_cost": "~200-500 tokens",
                 "use_when": "Before editing a function/class, understanding its context",
                 "tradeoff": "Returns source, callers, callees, imports in one call. Very efficient for edit preparation."
-            },
-            "count_references": {
-                "description": "Count how many times a symbol is referenced across the codebase.",
-                "params": {"symbol_name": "string (required)"},
-                "token_cost": "~100-300 tokens",
-                "use_when": "Risk assessment before making changes",
-                "tradeoff": "Quick check of how widely used a symbol is."
-            },
-            "impact_analysis": {
-                "description": "Full impact assessment before changing a symbol.",
-                "params": {"symbol_name": "string (required)"},
-                "token_cost": "~500-1000 tokens",
-                "use_when": "Before major refactoring, understanding blast radius",
-                "tradeoff": "Most comprehensive impact view. Use for critical changes."
-            },
-            "get_defined_symbols": {
-                "description": "Get all symbols defined in a file — functions, classes, methods, constants.",
-                "params": {"file": "string (required)"},
-                "token_cost": "~50-100 tokens",
-                "use_when": "Quick file overview without reading the full file",
-                "tradeoff": "Fast way to see what's in a file."
             }
         },
         "editing": {
@@ -1066,41 +1067,118 @@ TOOLS_DOCS = {
                 "use_when": "After preview_smart_edit confirms the change",
                 "tradeoff": "Creates a git commit."
             },
-            "get_edit_context": {
-                "description": "Get all structured context required to edit a symbol without reading the whole file.",
-                "params": {"symbol": "string (required)", "file": "string", "dir": "string", "package": "string"},
-                "token_cost": "~150-300 tokens",
-                "use_when": "Before editing a function/class, understanding its context",
-                "tradeoff": "Returns source, callers, callees, imports in one call."
+            "undo_edit": {
+                "description": "Revert the last applied edit by running git revert HEAD.",
+                "params": {},
+                "token_cost": "~30-50 tokens",
+                "use_when": "Immediately after apply_smart_edit if a test fails or change is wrong",
+                "tradeoff": "Creates a new revert commit."
+            }
+        },
+        "scan": {
+            "scan_codebase": {
+                "description": "Scan the codebase for bug patterns using Semgrep (AST-aware) or legacy REGEX/SQL rules.",
+                "params": {
+                    "rulebook_path": "string (optional) — Semgrep config. Accepts: (1) Registry configs: 'auto', 'p/java', 'p/python', 'p/owasp-top-ten', 'p/r2c-security-audit', 'p/secrets', 'p/default'; (2) Local YAML rulebooks: 'codeengine/rulebook/java/java-semgrep.yaml', 'codeengine/rulebook/python/python-semgrep.yaml'; (3) Auto-discover: omit to use first YAML under codeengine/rulebook/",
+                    "rules": "list of dicts (optional) — inline JSON rule definitions (legacy REGEX mode).",
+                    "output_file": "string (optional) — path to write results asynchronously",
+                    "list_rulebooks": "bool (optional) — set true to list available rulebooks without scanning"
+                },
+                "token_cost": "~200-500 tokens",
+                "use_when": "Code review, bug pattern detection, security scanning, pre-commit checks",
+                "tradeoff": "Semgrep: AST-aware, accurate. Legacy REGEX: fast, less accurate."
+            }
+        },
+        "filesystem": {
+            "build_tree": {
+                "description": "Build a visual directory tree for a given root path. Returns a tree-formatted string showing folder/file structure.",
+                "params": {"root": "string (required) — directory path to tree", "ignore": "list of strings (optional) — directory names to skip (default: .git, node_modules, __pycache__, .venv, target, dist)"},
+                "token_cost": "~100-500 tokens",
+                "use_when": "Understanding project layout, discovering directory structure, exploring unfamiliar repos",
+                "tradeoff": "Local tool, no daemon needed. Skips common large dirs by default."
+            },
+            "write_file": {
+                "description": "Write content to a file. Creates parent directories if needed. Overwrites existing files entirely.",
+                "params": {"path": "string (required) — file path", "content": "string (required) — content to write"},
+                "token_cost": "~50-100 tokens",
+                "use_when": "Creating new files, replacing file contents, scaffolding",
+                "tradeoff": "Local tool, no daemon needed. Overwrites without warning."
+            }
+        },
+        "file_ops": {
+            "read_file": {
+                "description": "Read content of a file, selecting lines by range, explicit line numbers, or pattern match.",
+                "params": {
+                    "file": "string (required)",
+                    "start_line": "int (optional) — used with end_line for a range",
+                    "end_line": "int (optional, inclusive)",
+                    "lines": "list of ints (optional) — read specific non-contiguous lines",
+                    "pattern": "string (optional) — search for a pattern instead of specifying lines",
+                    "context_lines": "int (optional, default 0) — lines of context around each pattern match"
+                },
+                "token_cost": "~50-300 tokens",
+                "use_when": "Reading a file — full, ranged, scattered lines, or pattern-matched.",
+                "tradeoff": "Provide only the params relevant to your selection mode: (start_line+end_line) for range, (lines) for scattered, (pattern) for search. Omit all three to read the whole file."
+            }
+        },
+        "semantic": {
+            "semantic_search": {
+                "description": "Find code by natural language description using embeddings.",
+                "params": {"query": "string (required)", "limit": "int (default: 10)"},
+                "token_cost": "~200-500 tokens",
+                "use_when": "Finding code by concept, not by exact name",
+                "tradeoff": "Requires embeddings to be enabled and generated."
+            }
+        },
+        "utility": {
+            "find_unused": {
+                "description": "Find unused code artifacts.",
+                "params": {"scope": "string (required) — 'imports' | 'symbols' | 'calls'"},
+                "token_cost": "~50-100 tokens",
+                "use_when": "Code cleanup, finding dead code",
+                "tradeoff": "Scope determines what to find: imports (unused), symbols (never called), calls (references to non-existent)."
+            },
+            "index_health": {
+                "description": "Report index health and whether trust-sensitive tools are blocked.",
+                "params": {},
+                "token_cost": "~100-300 tokens",
+                "use_when": "Debugging index issues",
+                "tradeoff": "Diagnostic tool for troubleshooting."
+            },
+            "run_query": {
+                "description": "Execute a raw SQL query against the codebase index database.",
+                "params": {"query": "string (required)", "params": "list (optional)"},
+                "token_cost": "~100-500 tokens",
+                "use_when": "Advanced queries not covered by other tools",
+                "tradeoff": "Powerful but requires SQL knowledge. Use other tools first."
+            },
+            "ping": {
+                "description": "Check if the Code Search Engine daemon is running and healthy.",
+                "params": {},
+                "token_cost": "~30-50 tokens",
+                "use_when": "Verifying daemon status before using other tools",
+                "tradeoff": "Quick health check."
             }
         }
     },
     "workflow": {
         "recommended": [
-            "1. Use get_index or search_symbol to locate symbols",
+            "0. Use build_tree to understand project layout",
+            "1. Use search_symbol to locate symbols",
             "2. Use get_edit_context to understand the symbol before editing",
-            "3. Use preview_smart_edit to stage changes",
-            "4. Use apply_smart_edit to commit"
+            "3. Use preview_smart_edit to stage block-based changes",
+            "4. Use apply_smart_edit to commit",
+            "5. Use undo_edit to revert if something goes wrong",
+            "6. Use scan_codebase with list_rulebooks=true to see available rulebooks",
+            "7. Use scan_codebase with rulebook_path to scan for bugs"
         ],
         "token_optimization": [
+            "Use build_tree first to understand project layout before diving into files",
             "Use extract_function/extract_class instead of reading full files",
             "Use get_edit_context for structured context (callers, callees, imports)",
-            "Use get_defined_symbols for quick file overview",
-            "Use count_references before modifying widely-used symbols",
-            "Batch parallel tool calls when possible"
+            "Batch parallel tool calls when possible",
+            "Use scan_codebase with list_rulebooks=true first to discover available rulebooks"
         ]
-    },
-    "tradeoffs_summary": {
-        "mcp_vs_native": {
-            "slower_than_native": ["search_code (use native grep)", "find_file (use native fd/glob)", "get_index (use native ls/find)"],
-            "worth_the_overhead": ["extract_function/extract_class", "get_edit_context", "get_callers/get_callees", "trace_execution", "get_importers", "search_symbol", "get_file_deps"],
-            "rule_of_thumb": "Use native tools for file finding and simple text search. Use MCP for AST extraction, call graph analysis, dependency tracing, and structured context."
-        },
-        "token_costs": {
-            "cheap": ["get_defined_symbols (~50-80)", "get_signature (~30-80)", "find_file (~50-100)", "get_imports (~50-100)", "extract_function (~50-150)", "count_references (~100-300)", "search_symbol (~50-100)"],
-            "moderate": ["search_code (~300-500)", "get_edit_context (~200-500)", "get_callers (~200-500)", "get_callees (~200-500)", "get_body (~200-500)", "get_importers (~200-500)", "get_file_deps (~300-600)", "get_index (~200-500)", "get_overview (~200-500)"],
-            "expensive": ["trace_execution (~500-1000)", "impact_analysis (~500-1000)", "extract_class (~100-300 for small, 500+ for large)"]
-        }
     }
 }
 
@@ -1183,6 +1261,167 @@ async def find_similar_functions(symbol_name: str, file: str | None = None, limi
     Token cost: ~150-300 tokens
     """
     return await _get("/search/similar", symbol=symbol_name, file=file, limit=limit)
+
+
+@mcp.tool()
+async def find_unused(scope: str) -> dict:
+    """
+    Find unused code artifacts.
+
+    Args:
+        scope: "imports" | "symbols" | "calls"
+            - imports: imported but never used
+            - symbols: defined functions/methods never called
+            - calls: call references to non-existent symbols
+
+    Token cost: ~50-100 tokens
+    """
+    return await _get("/search/unused", scope=scope)
+
+
+@mcp.tool()
+async def index_health() -> dict:
+    """
+    Report index health and whether trust-sensitive tools such as find_unused are blocked.
+
+    Token cost: ~100-300 tokens
+    """
+    return await _get("/search/doctor")
+
+
+@mcp.tool()
+async def run_query(query: str, params: list = []) -> dict:
+    """
+    Execute a raw SQL query against the codebase index database.
+
+    Args:
+        query: SQL query to execute (e.g. "SELECT * FROM symbols LIMIT 10")
+        params: Optional list of parameterized query values
+
+    Token cost: ~100-500 tokens
+    """
+    return await _post("/search/query", {"query": query, "params": params})
+
+
+# ── File Reading Tools ────────────────────────────────────────────────────────
+
+@mcp.tool()
+async def read_file(
+    file: str,
+    start_line: int | None = None,
+    end_line: int | None = None,
+    lines: list[int] | None = None,
+    pattern: str | None = None,
+    context_lines: int = 0,
+) -> dict:
+    """
+    Read content of a file, selecting lines by range, explicit line numbers, or pattern match.
+
+    Args:
+        file: Relative path to the file (e.g. "codeengine/app.py").
+        start_line: Start line number (1-indexed). Use with end_line for a range.
+        end_line: End line number (inclusive). Use with start_line for a range.
+        lines: List of specific line numbers to read (1-indexed). For non-contiguous lines.
+        pattern: Regex pattern to search for instead of specifying lines.
+        context_lines: Lines of context around each pattern match (default: 0).
+
+    Modes (provide only one):
+        - Whole file: omit all optional params
+        - Range: provide start_line + end_line
+        - Scattered lines: provide lines list
+        - Pattern search: provide pattern (+ optional context_lines)
+
+    Returns:
+        dict with keys: file, total_lines, mode, content/lines/matches
+    """
+    if pattern:
+        return await _get("/search/grep-file", file=file, pattern=pattern, context=context_lines)
+    elif lines:
+        return await _post("/search/read-lines", {"file": file, "lines": lines})
+    else:
+        params = {"file": file}
+        if start_line is not None:
+            params["start_line"] = start_line
+        if end_line is not None:
+            params["end_line"] = end_line
+        return await _get("/search/file-read", **params)
+
+
+# ── Filesystem Tools ────────────────────────────────────────────────────────
+
+@mcp.tool()
+async def build_tree(
+    root: str,
+    ignore: list[str] | None = None,
+    include_deps: bool = False,
+) -> dict:
+    """
+    Build a visual directory tree for a given root path.
+    Returns a tree-formatted string showing the folder/file structure.
+
+    Args:
+        root: Absolute or relative path to the directory to tree.
+        ignore: Optional list of directory names to skip
+                (default: .git, node_modules, __pycache__, .venv, target, dist).
+        include_deps: If True, include dependency folders (node_modules, .venv, etc.).
+                      Only .git is always excluded.
+    """
+    _deps_dirs = {"node_modules", "__pycache__", ".venv", "target", "dist", ".tox", "venv", "env", ".env", "build", "out"}
+    _always_ignore = {".git"}
+    if include_deps:
+        skip = _always_ignore
+    elif ignore:
+        skip = set(ignore)
+    else:
+        skip = _deps_dirs | _always_ignore
+
+    def walk(dir_path: Path):
+        entries = sorted(
+            [p for p in dir_path.iterdir() if p.name not in skip],
+            key=lambda p: (p.is_file(), p.name.lower()),
+        )
+        return entries
+
+    def render(dir_path: Path, prefix: str = "") -> list[str]:
+        lines: list[str] = []
+        entries = walk(dir_path)
+        for i, entry in enumerate(entries):
+            is_last = i == len(entries) - 1
+            connector = "└── " if is_last else "├── "
+            name = entry.name + "/" if entry.is_dir() else entry.name
+            lines.append(prefix + connector + name)
+            if entry.is_dir():
+                extension = "    " if is_last else "│   "
+                lines.extend(render(entry, prefix + extension))
+        return lines
+
+    path = Path(root)
+    if not path.is_dir():
+        return {"error": f"Not a directory: {root}"}
+
+    tree = path.name + "/\n" + "\n".join(render(path))
+    return {"root": str(path), "tree": tree}
+
+
+@mcp.tool()
+async def write_file(path: str, content: str) -> dict:
+    """
+    Write content to a file. Creates parent directories if needed.
+    Overwrites existing files entirely.
+
+    Args:
+        path: Absolute or relative path to the file to write.
+        content: The full content to write to the file.
+    """
+    p = Path(path)
+    try:
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(content, encoding="utf-8")
+        log.info("[write_file] Wrote %d bytes to %s", len(content), path)
+        return {"ok": True, "path": str(p), "bytes": len(content.encode("utf-8"))}
+    except Exception as e:
+        log.error("[write_file] Failed: %s", e)
+        return {"ok": False, "error": str(e)}
 
 
 # ── Entry point ───────────────────────────────────────────────────────────────
