@@ -26,10 +26,26 @@ async def search_code_route(
     q: str = Query(..., description="search query"),
     path: str = Query(".", description="root path"),
     lang: str | None = Query(None),
-    limit: int = Query(50)
+    limit: int = Query(50),
+    context_lines: int = Query(0, description="lines of context around each match"),
+    exclude_dirs: list[str] | None = Query(None, description="extra directory names to exclude"),
+    regex: bool = Query(False, description="treat query as a regex pattern instead of literal text"),
 ):
     """Search for matching patterns in files using ripgrep."""
-    matches = await search_code(q, path, lang, limit)
+    matches = await search_code(q, path, lang, limit, context_lines, exclude_dirs=exclude_dirs, regex=regex)
+    return SearchResponse(matches=matches, total=len(matches), query=q)
+
+@router.get("/grep-code", response_model=SearchResponse)
+async def grep_code_route(
+    q: str = Query(..., description="search query"),
+    path: str = Query(".", description="root path"),
+    lang: str | None = Query(None),
+    limit: int = Query(50),
+    context_lines: int = Query(0, description="lines of context around each match"),
+    exclude_dirs: list[str] | None = Query(None, description="extra directory names to exclude"),
+):
+    """Search for matching patterns in files using ripgrep (aliased as grep_code)."""
+    matches = await search_code(q, path, lang, limit, context_lines, exclude_dirs=exclude_dirs)
     return SearchResponse(matches=matches, total=len(matches), query=q)
 
 @router.get("/symbol")
@@ -72,15 +88,100 @@ async def get_class_route(file: str, name: str):
     return result
 
 @router.get("/file-read")
-async def read_file_content(file: str):
-    """Read full content of a file relative to REPO_PATH."""
+async def read_file_content(
+    file: str,
+    start_line: int | None = None,
+    end_line: int | None = None,
+):
+    """Read content of a file with optional line range."""
     repo_root = Path(os.getenv("REPO_PATH", ".")).resolve()
     file_path = (repo_root / file).resolve()
     if not file_path.is_file():
         raise HTTPException(status_code=404, detail=f"File '{file}' not found.")
     try:
         with open(file_path, "r", encoding="utf-8", errors="replace") as f:
-            return {"file": file, "content": f.read()}
+            all_lines = f.readlines()
+
+        total_lines = len(all_lines)
+
+        if start_line is not None or end_line is not None:
+            start = max((start_line or 1) - 1, 0)
+            end = end_line if end_line else total_lines
+            end = min(end, total_lines)
+            selected = all_lines[start:end]
+            content = "".join(f"{i+1}: {line}" for i, line in enumerate(selected, start=start))
+            return {"file": file, "total_lines": total_lines, "start_line": start + 1, "end_line": end, "content": content}
+        else:
+            content = "".join(f"{i+1}: {line}" for i, line in enumerate(all_lines))
+            return {"file": file, "total_lines": total_lines, "content": content}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/read-lines")
+async def read_specific_lines(body: dict):
+    """Read specific line numbers from a file."""
+    file = body.get("file")
+    lines = body.get("lines", [])
+    if not file or not lines:
+        raise HTTPException(status_code=400, detail="file and lines required")
+
+    repo_root = Path(os.getenv("REPO_PATH", ".")).resolve()
+    file_path = (repo_root / file).resolve()
+    if not file_path.is_file():
+        raise HTTPException(status_code=404, detail=f"File '{file}' not found.")
+
+    try:
+        with open(file_path, "r", encoding="utf-8", errors="replace") as f:
+            all_lines = f.readlines()
+
+        result = []
+        for line_num in lines:
+            if 1 <= line_num <= len(all_lines):
+                result.append({"line": line_num, "content": all_lines[line_num - 1].rstrip("\n")})
+            else:
+                result.append({"line": line_num, "content": None, "error": "out of range"})
+
+        return {"file": file, "requested_lines": result}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/grep-file")
+async def grep_file_content(
+    file: str,
+    pattern: str,
+    context: int = 0,
+):
+    """Search for a regex pattern in a file and return matches with context."""
+    import re
+
+    repo_root = Path(os.getenv("REPO_PATH", ".")).resolve()
+    file_path = (repo_root / file).resolve()
+    if not file_path.is_file():
+        raise HTTPException(status_code=404, detail=f"File '{file}' not found.")
+
+    try:
+        with open(file_path, "r", encoding="utf-8", errors="replace") as f:
+            all_lines = f.readlines()
+
+        regex = re.compile(pattern)
+        matches = []
+
+        for i, line in enumerate(all_lines):
+            if regex.search(line):
+                ctx_before = [all_lines[j].rstrip("\n") for j in range(max(0, i - context), i)]
+                ctx_after = [all_lines[j].rstrip("\n") for j in range(i + 1, min(len(all_lines), i + 1 + context))]
+                matches.append({
+                    "line": i + 1,
+                    "content": line.rstrip("\n"),
+                    "context_before": ctx_before,
+                    "context_after": ctx_after,
+                })
+
+        return {"file": file, "pattern": pattern, "matches": matches, "total": len(matches)}
+    except re.error as e:
+        raise HTTPException(status_code=400, detail=f"Invalid regex: {e}")
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -785,3 +886,55 @@ async def endpoint_flow_route(
 ):
     """Trace execution flow from an entry point function through all callees."""
     return await trace_endpoint_flow(entry, max_depth)
+
+
+@router.get("/unused")
+async def find_unused_route(
+    scope: str = Query(..., description="What to check: imports, symbols, or calls"),
+):
+    """Find unused code artifacts (imports, symbols, or calls)."""
+    from codeengine.core.search_engine import find_unused
+    return await find_unused(scope)
+
+
+
+@router.get("/doctor")
+async def index_doctor_route():
+    """Report code index health and whether trust-sensitive tools are blocked."""
+    from codeengine.core.search_engine import get_index_health
+    return await get_index_health()
+
+class QueryRequest(BaseModel):
+    query: str
+    params: list = []
+
+
+@router.post("/query")
+async def run_raw_query(body: QueryRequest):
+    """Execute a raw SQL query against the codebase index database."""
+    import re
+    from codeengine.database.sqlite import get_db
+
+    READ_ONLY_PATTERN = re.compile(
+        r'^\s*(SELECT|PRAGMA|EXPLAIN|WITH)\b', re.IGNORECASE
+    )
+    WRITE_PATTERN = re.compile(
+        r'^\s*(INSERT|UPDATE|DELETE|DROP|ALTER|CREATE|TRUNCATE)\b', re.IGNORECASE
+    )
+
+    query = body.query.strip()
+    if WRITE_PATTERN.match(query) and not READ_ONLY_PATTERN.match(query):
+        raise HTTPException(status_code=403, detail="Write operations not allowed")
+
+    async with get_db() as db:
+        try:
+            cursor = await db.execute(query, body.params)
+            columns = [desc[0] for desc in cursor.description] if cursor.description else []
+            rows = await cursor.fetchall()
+            return {
+                "columns": columns,
+                "rows": [dict(row) for row in rows],
+                "count": len(rows),
+            }
+        except Exception as e:
+            raise HTTPException(status_code=400, detail=str(e))
