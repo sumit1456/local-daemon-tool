@@ -28,8 +28,21 @@ RG_LANG_MAP = {
     "rust": "rust",
 }
 
+DEFAULT_GREP_EXCLUDES = [
+    ".git", ".svn", ".hg",
+    ".idea", ".vscode", ".eclipse", ".project",
+    ".venv", ".venv-mcp", "venv", "__pycache__", ".pytest_cache",
+    ".ruff_cache", ".mypy_cache", ".tox", ".nox",
+    "*.egg-info",
+    "node_modules", ".npm", ".yarn", "dist", "build", ".next", ".nuxt",
+    "target", ".gradle", ".m2", "out", "bin",
+    "vendor",
+    ".code-scan", ".semgrep",
+]
+
 SUBPROCESS_TIMEOUT = 30
 DEFAULT_BODY_MAX_LINES = 100
+UNUSED_UNRESOLVED_CALL_RATIO_LIMIT = 0.30
 
 
 # ---------------------------------------------------------------------------
@@ -231,18 +244,26 @@ async def search_code(
     lang: str | None,
     limit: int,
     context_lines: int = 0,
+    exclude_dirs: list[str] | None = None,
+    regex: bool = False,
 ) -> list[Match]:
     """
     Search for query in code files using ripgrep.
 
     Args:
-        query:         Literal string to search for.
+        query:         String to search for. Literal by default; pass
+                       regex=True to treat it as a ripgrep regex pattern.
         root:          Directory to search under.
         lang:          Optional language filter (see RG_LANG_MAP).
-        limit:         Max total matches to return (enforced globally).
+        limit:         Max total matches to return (enforced globally by Python-side break).
         context_lines: Lines of surrounding context above/below each match.
                        0 = match line only (default). Pass e.g. 3 when you
                        need to see the call site in context.
+        exclude_dirs:  Additional directory names to exclude. Merged with
+                       DEFAULT_GREP_EXCLUDES (e.g. .venv, node_modules).
+        regex:         If True, query is treated as a ripgrep regex pattern
+                       (supports ., *, +, \\b, alternation, character classes, etc).
+                       If False (default), query is escaped and matched literally.
     """
     if not query.strip():
         return []
@@ -253,8 +274,20 @@ async def search_code(
         if rg_type is None:
             logger.warning("Language %r not in RG_LANG_MAP; filter ignored.", lang)
 
+    # Per-file ceiling so rg stops early per file instead of collecting
+    # hundreds of matches Python will discard.  Global cutoff is enforced
+    # by the Python-side break below.
+    per_file_cap = min(limit, 20)
+
     rg_path = _get_binary_path("rg")
-    args = [rg_path, "--json", f"--max-count={limit}", "--multiline"]
+    args = [rg_path, "--json", f"--max-count={per_file_cap}", "--multiline"]
+
+    # Exclude directories — merge caller-supplied with built-in defaults
+    dirs_to_exclude = list(DEFAULT_GREP_EXCLUDES)
+    if exclude_dirs:
+        dirs_to_exclude.extend(d for d in exclude_dirs if d not in dirs_to_exclude)
+    for d in dirs_to_exclude:
+        args.extend(["--glob", f"!{d}"])
 
     if rg_type:
         args.extend(["--type", rg_type])
@@ -262,7 +295,8 @@ async def search_code(
     if context_lines > 0:
         args.extend(["-C", str(context_lines)])
 
-    normalized = _escape_regex(query).replace("\r\n", "\n").replace("\n", r"\r?\n")
+    pattern = query if regex else _escape_regex(query)
+    normalized = pattern.replace("\r\n", "\n").replace("\n", r"\r?\n")
     args.extend(["-e", normalized, root])
 
     stdout = await asyncio.to_thread(_run_subprocess, args)
@@ -303,6 +337,8 @@ async def search_code(
                 pending_before = []
                 last_match = m
                 matches.append(m)
+                if len(matches) >= limit:
+                    break
 
             elif kind == "begin":
                 pending_before = []
@@ -797,6 +833,16 @@ def _build_index_summary(all_files: list[FileIndex]) -> dict:
     for f in all_files:
         for s in f.symbols:
             kind_counter[s.kind] += 1
+
+    recommendations: list[str] = []
+    orphan_total = sum(orphan_counts.values())
+    if foreign_key_violations or orphan_total:
+        recommendations.append("run_reindex")
+    if blocks_find_unused:
+        recommendations.append("improve_call_resolution_before_find_unused")
+    if files == 0:
+        recommendations.append("run_reindex")
+    recommendations = list(dict.fromkeys(recommendations))
 
     return {
         "mode": "summary",
@@ -1714,9 +1760,13 @@ async def build_transitive_closure() -> int:
     async with get_db() as db:
         await db.execute("DELETE FROM transitive_callers")
 
-        # Load all direct edges: {callee_id: [caller_id, ...]}
+        # Load only live direct edges: {callee_id: [caller_id, ...]}
         async with db.execute(
-            "SELECT caller_id, callee_id FROM call_edges WHERE callee_id IS NOT NULL"
+            "SELECT ce.caller_id, ce.callee_id "
+            "FROM call_edges ce "
+            "JOIN symbols caller ON caller.id = ce.caller_id "
+            "JOIN symbols callee ON callee.id = ce.callee_id "
+            "WHERE ce.callee_id IS NOT NULL"
         ) as cur:
             rows = await cur.fetchall()
 
@@ -1995,4 +2045,457 @@ async def trace_endpoint_flow(entry_point: str, max_depth: int = 8) -> dict:
         "max_depth_reached": max(v["depth"] for v in visited.values()) if visited else 0,
         "total_nodes": len(chain),
         "chain": chain,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Unused code detection
+# ---------------------------------------------------------------------------
+
+async def get_index_health() -> dict:
+    """Return integrity metrics for the current code index."""
+    async with get_db() as db:
+        async def scalar(query: str, params: tuple = ()) -> int | float:
+            async with db.execute(query, params) as cur:
+                row = await cur.fetchone()
+            if row is None:
+                return 0
+            value = row[0]
+            return value if value is not None else 0
+
+        files = int(await scalar("SELECT COUNT(*) FROM files"))
+        symbols = int(await scalar("SELECT COUNT(*) FROM symbols"))
+        live_call_edges = int(await scalar(
+            "SELECT COUNT(*) "
+            "FROM call_edges ce "
+            "JOIN symbols caller ON caller.id = ce.caller_id"
+        ))
+        unresolved_live_call_edges = int(await scalar(
+            "SELECT COUNT(*) "
+            "FROM call_edges ce "
+            "JOIN symbols caller ON caller.id = ce.caller_id "
+            "WHERE ce.callee_id IS NULL"
+        ))
+        unresolved_call_ratio = (
+            unresolved_live_call_edges / live_call_edges
+            if live_call_edges else 0.0
+        )
+
+        orphan_counts = {
+            "docstrings": int(await scalar(
+                "SELECT COUNT(*) "
+                "FROM docstrings d "
+                "LEFT JOIN symbols s ON s.id = d.symbol_id "
+                "WHERE s.id IS NULL"
+            )),
+            "call_edges": int(await scalar(
+                "SELECT COUNT(*) "
+                "FROM call_edges ce "
+                "LEFT JOIN symbols caller ON caller.id = ce.caller_id "
+                "WHERE caller.id IS NULL"
+            )),
+            "imports": int(await scalar(
+                "SELECT COUNT(*) "
+                "FROM imports i "
+                "LEFT JOIN files f ON f.id = i.file_id "
+                "WHERE f.id IS NULL"
+            )),
+            "symbol_references": int(await scalar(
+                "SELECT COUNT(*) "
+                "FROM symbol_references sr "
+                "LEFT JOIN symbols s ON s.id = sr.symbol_id "
+                "LEFT JOIN files f ON f.id = sr.file_id "
+                "WHERE s.id IS NULL OR f.id IS NULL"
+            )),
+            "embeddings": int(await scalar(
+                "SELECT COUNT(*) "
+                "FROM embeddings e "
+                "LEFT JOIN symbols s ON s.id = e.symbol_id "
+                "WHERE s.id IS NULL"
+            )),
+            "transitive_callers": int(await scalar(
+                "SELECT COUNT(*) "
+                "FROM transitive_callers tc "
+                "LEFT JOIN symbols s ON s.id = tc.symbol_id "
+                "LEFT JOIN symbols caller ON caller.id = tc.caller_id "
+                "WHERE s.id IS NULL OR caller.id IS NULL"
+            )),
+        }
+        foreign_key_violations = int(await scalar(
+            "SELECT COUNT(*) FROM pragma_foreign_key_check"
+        ))
+
+    orphan_total = sum(orphan_counts.values())
+    recommendations = []
+    if foreign_key_violations or orphan_total:
+        recommendations.append("run_reindex")
+    if unresolved_call_ratio > UNUSED_UNRESOLVED_CALL_RATIO_LIMIT:
+        recommendations.append("improve_call_resolution_before_find_unused")
+    recommendations = list(dict.fromkeys(recommendations))
+
+    blocks_find_unused = (
+        live_call_edges > 0
+        and unresolved_call_ratio > UNUSED_UNRESOLVED_CALL_RATIO_LIMIT
+    )
+    return {
+        "status": "unhealthy" if blocks_find_unused or foreign_key_violations else "ok",
+        "files": files,
+        "symbols": symbols,
+        "live_call_edges": live_call_edges,
+        "unresolved_live_call_edges": unresolved_live_call_edges,
+        "unresolved_call_ratio": unresolved_call_ratio,
+        "unresolved_call_ratio_limit": UNUSED_UNRESOLVED_CALL_RATIO_LIMIT,
+        "blocks_find_unused": blocks_find_unused,
+        "recommendations": recommendations,
+        "orphan_total": orphan_total,
+        "orphan_counts": orphan_counts,
+        "foreign_key_violations": foreign_key_violations,
+    }
+
+
+async def find_unused(scope: str) -> dict:
+    """
+    Find unused code artifacts.
+
+    Args:
+        scope: "imports" | "symbols" | "calls"
+
+    Returns:
+        dict with scope and list of unused items.
+    """
+    if scope not in ("imports", "symbols", "calls"):
+        raise ValueError("scope must be 'imports', 'symbols', or 'calls'")
+
+    health = await get_index_health()
+    if health["blocks_find_unused"]:
+        return {
+            "scope": scope,
+            "count": 0,
+            "unused": [],
+            "blocked": True,
+            "reason": (
+                "Index health check failed: unresolved live call ratio "
+                f"{health['unresolved_call_ratio']:.1%} exceeds "
+                f"{health['unresolved_call_ratio_limit']:.0%}. "
+                "Run /reindex, then check /search/doctor before using find_unused."
+            ),
+            "health": health,
+        }
+
+    results = []
+
+    async with get_db() as db:
+        if scope == "imports":
+            from tree_sitter import Parser
+            from codeengine.core.ast_engine import (
+                PARSERS, detect_language, IMPORT_NODE_TYPES
+            )
+            
+            query = """
+                SELECT i.module, f.path, i.level, i.is_star
+                FROM imports i
+                JOIN files f ON i.file_id = f.id
+                ORDER BY f.path, i.module
+            """
+            file_imports = {}
+            async with db.execute(query) as cur:
+                rows = await cur.fetchall()
+                for row in rows:
+                    file_imports.setdefault(row["path"], []).append(row)
+                    
+            for file_path, imports_list in file_imports.items():
+                lang = detect_language(file_path)
+                if not lang or lang not in PARSERS:
+                    continue
+                try:
+                    with open(file_path, "rb") as f:
+                        source_bytes = f.read()
+                except Exception:
+                    continue
+                parser = PARSERS[lang]
+                local_parser = Parser(parser.language)
+                tree = local_parser.parse(source_bytes)
+                
+                import_types = IMPORT_NODE_TYPES.get(lang, set())
+                import_data = []
+                
+                def find_imports(node):
+                    if node.type in import_types:
+                        text = node.text.decode(errors="replace").strip()
+                        module = ""
+                        is_star = False
+                        imported_names = set()
+                        
+                        if lang == "python":
+                            if node.type == "import_from_statement":
+                                module_part = text.split("import")[0].strip()
+                                if module_part.startswith("from"):
+                                    module_part = module_part[4:].strip()
+                                module = module_part
+                                if "import *" in text:
+                                    is_star = True
+                                else:
+                                    found_import = False
+                                    for child in node.children:
+                                        if child.text == b"import":
+                                            found_import = True
+                                            continue
+                                        if found_import:
+                                            if child.type == "aliased_import":
+                                                alias = child.child_by_field_name("alias")
+                                                if alias:
+                                                    imported_names.add(alias.text.decode(errors="replace"))
+                                                else:
+                                                    name = child.child_by_field_name("name")
+                                                    if name:
+                                                        imported_names.add(name.text.decode(errors="replace"))
+                                            elif child.type in ("dotted_name", "identifier"):
+                                                imported_names.add(child.text.decode(errors="replace"))
+                            elif node.type == "import_statement":
+                                for child in node.children:
+                                    if child.type == "dotted_name":
+                                        parts = child.text.decode(errors="replace").split(".")
+                                        module = child.text.decode(errors="replace")
+                                        imported_names.add(parts[0])
+                                    elif child.type == "aliased_import":
+                                        alias = child.child_by_field_name("alias")
+                                        if alias:
+                                            imported_names.add(alias.text.decode(errors="replace"))
+                                        name = child.child_by_field_name("name")
+                                        if name:
+                                            module = name.text.decode(errors="replace")
+                        elif lang in ("javascript", "typescript"):
+                            if "from" in text:
+                                after_from = text.split("from")[-1].strip()
+                                module = after_from.strip("'\"; ")
+                            elif "require(" in text:
+                                import re
+                                m = re.search(r"require\(['\"](.+?)['\"]\)", text)
+                                if m:
+                                    module = m.group(1)
+                            def collect_js_imports(n):
+                                if n.type == "string":
+                                    return
+                                if n.type in ("identifier", "type_identifier"):
+                                    t = n.text.decode(errors="replace")
+                                    if t not in ("import", "from", "as", "type", "*"):
+                                        imported_names.add(t)
+                                for c in n.children:
+                                    collect_js_imports(c)
+                            collect_js_imports(node)
+                        elif lang == "java":
+                            module = text.replace("import", "").replace(";", "").strip()
+                            if module.startswith("static "):
+                                module = module[7:].strip()
+                            if "*" in module:
+                                is_star = True
+                            else:
+                                parts = module.split(".")
+                                imported_names.add(parts[-1])
+                        elif lang == "go":
+                            import re
+                            m = re.search(r'"(.+?)"', text)
+                            if m:
+                                module = m.group(1)
+                            for child in node.children:
+                                if child.type == "identifier":
+                                    imported_names.add(child.text.decode(errors="replace"))
+                            if not imported_names and module:
+                                parts = module.split("/")
+                                imported_names.add(parts[-1])
+                        elif lang == "rust":
+                            module = text.replace("use", "").replace(";", "").strip()
+                            if "*" in module:
+                                is_star = True
+                            def collect_rust_use(n):
+                                if n.type in ("identifier", "type_identifier"):
+                                    t = n.text.decode(errors="replace")
+                                    if t not in ("use", "as", "self", "super", "crate", "*"):
+                                        imported_names.add(t)
+                                for c in n.children:
+                                    collect_rust_use(c)
+                            collect_rust_use(node)
+                            
+                        import_data.append((module, imported_names, node.start_byte, node.end_byte, is_star))
+                    else:
+                        for child in node.children:
+                            find_imports(child)
+                            
+                find_imports(tree.root_node)
+                
+                all_refs = set()
+                import_ranges = [(d[2], d[3]) for d in import_data]
+                
+                def is_in_import_range(byte_pos):
+                    for start, end in import_ranges:
+                        if start <= byte_pos <= end:
+                            return True
+                    return False
+                    
+                def find_refs(node):
+                    if node.type in ("identifier", "type_identifier", "field_identifier"):
+                        if not is_in_import_range(node.start_byte):
+                            all_refs.add(node.text.decode(errors="replace"))
+                    for child in node.children:
+                        find_refs(child)
+                        
+                find_refs(tree.root_node)
+                
+                for row in imports_list:
+                    row_module = row["module"]
+                    is_row_unused = False
+                    for module, imported_names, _, _, is_star in import_data:
+                        if module == row_module:
+                            if is_star or row["is_star"]:
+                                break
+                            if imported_names and not (imported_names & all_refs):
+                                is_row_unused = True
+                            break
+                    if is_row_unused:
+                        results.append({
+                            "name": row_module,
+                            "file": row["path"],
+                            "level": row["level"],
+                            "is_star": bool(row["is_star"]),
+                        })
+
+        elif scope == "symbols":
+            from tree_sitter import Parser
+            from codeengine.core.ast_engine import PARSERS, detect_language, is_decorated
+            
+            query = """
+                SELECT s.id, s.name, s.kind, f.path, s.line_start
+                FROM symbols s
+                JOIN files f ON s.file_id = f.id
+                LEFT JOIN call_edges ce ON ce.callee_id = s.id
+                LEFT JOIN symbol_references sr ON sr.symbol_id = s.id
+                WHERE ce.callee_id IS NULL
+                  AND sr.symbol_id IS NULL
+                  AND s.kind IN ('function', 'method')
+                ORDER BY f.path, s.name
+            """
+            file_candidates = {}
+            async with db.execute(query) as cur:
+                rows = await cur.fetchall()
+                for row in rows:
+                    file_candidates.setdefault(row["path"], []).append(row)
+                    
+            for file_path, candidates in file_candidates.items():
+                lang = detect_language(file_path)
+                if not lang or lang not in PARSERS:
+                    for row in candidates:
+                        results.append({
+                            "name": row["name"],
+                            "kind": row["kind"],
+                            "file": row["path"],
+                            "line": row["line_start"],
+                        })
+                    continue
+                try:
+                    with open(file_path, "rb") as f:
+                        source_bytes = f.read()
+                except Exception:
+                    for row in candidates:
+                        results.append({
+                            "name": row["name"],
+                            "kind": row["kind"],
+                            "file": row["path"],
+                            "line": row["line_start"],
+                        })
+                    continue
+                parser = PARSERS[lang]
+                local_parser = Parser(parser.language)
+                tree = local_parser.parse(source_bytes)
+                
+                line_decoration = {}
+                def walk_decorations(node):
+                    line_decoration[node.start_point[0] + 1] = is_decorated(node, lang)
+                    for child in node.children:
+                        walk_decorations(child)
+                walk_decorations(tree.root_node)
+                
+                for row in candidates:
+                    line = row["line_start"]
+                    if line_decoration.get(line):
+                        continue
+                    results.append({
+                        "name": row["name"],
+                        "kind": row["kind"],
+                        "file": row["path"],
+                        "line": line,
+                    })
+
+        elif scope == "calls":
+            from tree_sitter import Parser
+            from codeengine.core.ast_engine import (
+                PARSERS, detect_language, extract_imported_names,
+                BUILTINS_BY_LANG, is_method_call_target, _get_call_target, _extract_callee_name
+            )
+            
+            query = """
+                SELECT ce.callee_name, f.path AS callee_file
+                FROM call_edges ce
+                JOIN files f ON ce.callee_file = f.path
+                WHERE ce.callee_id IS NULL
+                ORDER BY f.path, ce.callee_name
+            """
+            file_calls = {}
+            async with db.execute(query) as cur:
+                rows = await cur.fetchall()
+                for row in rows:
+                    file_calls.setdefault(row["callee_file"], []).append(row["callee_name"])
+                    
+            for file_path, callee_names in file_calls.items():
+                lang = detect_language(file_path)
+                if not lang or lang not in PARSERS:
+                    for name in callee_names:
+                        results.append({
+                            "name": name,
+                            "file": file_path,
+                        })
+                    continue
+                try:
+                    with open(file_path, "rb") as f:
+                        source_bytes = f.read()
+                except Exception:
+                    for name in callee_names:
+                        results.append({
+                            "name": name,
+                            "file": file_path,
+                        })
+                    continue
+                
+                imported_names = extract_imported_names(file_path)
+                builtins = BUILTINS_BY_LANG.get(lang, set())
+                direct_calls = set()
+                
+                parser = PARSERS[lang]
+                local_parser = Parser(parser.language)
+                tree = local_parser.parse(source_bytes)
+                
+                def check_calls(node):
+                    target = _get_call_target(node)
+                    if target:
+                        name = _extract_callee_name(target)
+                        if name:
+                            if not is_method_call_target(target, lang):
+                                direct_calls.add(name)
+                    for child in node.children:
+                        check_calls(child)
+                        
+                check_calls(tree.root_node)
+                
+                for name in set(callee_names):
+                    if name in direct_calls and name not in builtins and name not in imported_names:
+                        results.append({
+                            "name": name,
+                            "file": file_path,
+                        })
+
+    return {
+        "scope": scope,
+        "count": len(results),
+        "unused": results,
+        "blocked": False,
+        "health": health,
     }
