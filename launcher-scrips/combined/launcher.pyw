@@ -546,6 +546,7 @@ def start_daemon_single():
             "--host", HOST,
             "--port", str(PORT),
             "--log-level", "debug",
+            "--reload",
         ],
         cwd=_root,
         env=env,
