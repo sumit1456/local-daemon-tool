@@ -36,11 +36,6 @@ _IS_HEADLESS = (
     and not os.environ.get("WAYLAND_DISPLAY")
 )
 
-# When True, uvicorn is started with --reload and manages its own child
-# process restarts on file changes; _monitor_daemon's restart loop is
-# disabled in that case to avoid the two mechanisms racing each other.
-_RELOAD_ENABLED = True
-
 # ── Setup Logging immediately ────────────────────────────────────────────────
 os.makedirs(os.path.join(_root, "logs"), exist_ok=True)
 log_file = os.path.join(_root, "logs", "launcher.log")
@@ -518,9 +513,18 @@ def start_daemon():
 
 
 def _monitor_daemon():
-    """Watch the daemon process; restart it if it exits cleanly (e.g. /restart)."""
+    """Watch the daemon process; restart it if it exits cleanly (e.g. /restart).
+
+    Skipped when uvicorn's own --reload is active: the reloader process already
+    manages its own child restarts on file changes, and this thread racing
+    against it can cause duplicate server_process spawns / port conflicts.
+    """
     global server_process
     restart_delay = 1.5  # seconds before restart
+
+    if _RELOAD_ENABLED:
+        logger.info("uvicorn --reload is active; disabling launcher auto-restart monitor.")
+        return
 
     while True:
         if server_process is None:
