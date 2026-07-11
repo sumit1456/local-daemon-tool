@@ -36,6 +36,11 @@ _IS_HEADLESS = (
     and not os.environ.get("WAYLAND_DISPLAY")
 )
 
+# When True, uvicorn is started with --reload and manages its own child
+# process restarts on file changes; _monitor_daemon's restart loop is
+# disabled in that case to avoid the two mechanisms racing each other.
+_RELOAD_ENABLED = True
+
 # ── Setup Logging immediately ────────────────────────────────────────────────
 os.makedirs(os.path.join(_root, "logs"), exist_ok=True)
 log_file = os.path.join(_root, "logs", "launcher.log")
