@@ -491,16 +491,19 @@ def start_daemon():
     env = os.environ.copy()
     env["PYTHONPATH"] = _root
 
+    uvicorn_cmd = [
+        venv_python,
+        "-m", "uvicorn",
+        "codeengine.app:app",
+        "--host", HOST,
+        "--port", str(PORT),
+        "--log-level", "debug",
+    ]
+    if _RELOAD_ENABLED:
+        uvicorn_cmd.append("--reload")
+
     server_process = subprocess.Popen(
-        [
-            venv_python,
-            "-m", "uvicorn",
-            "codeengine.app:app",
-            "--host", HOST,
-            "--port", str(PORT),
-            "--log-level", "debug",
-            "--reload",
-        ],
+        uvicorn_cmd,
         cwd=_root,
         env=env,
         creationflags=_NO_WINDOW,
