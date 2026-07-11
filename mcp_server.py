@@ -1417,16 +1417,34 @@ async def write_file(path: str, content: str) -> dict:
     """
     Write content to a file. Creates parent directories if needed.
     Overwrites existing files entirely.
+    Only permitted within the currently indexed repo.
 
     Args:
         path: Absolute or relative path to the file to write.
         content: The full content to write to the file.
     """
+    repo = await _get_repo_path()
+    repo_root = Path(repo).resolve()
+
     p = Path(path)
+    if not p.is_absolute():
+        p = repo_root / p
+    p = p.resolve()
+
+    try:
+        p.relative_to(repo_root)
+    except ValueError:
+        log.error("[write_file] Rejected: %s is outside indexed repo %s", p, repo_root)
+        return {
+            "ok": False,
+            "error": f"path '{path}' resolves outside the indexed repo ({repo_root}); "
+                     f"write_file only operates on the currently indexed repository",
+        }
+
     try:
         p.parent.mkdir(parents=True, exist_ok=True)
         p.write_text(content, encoding="utf-8")
-        log.info("[write_file] Wrote %d bytes to %s", len(content), path)
+        log.info("[write_file] Wrote %d bytes to %s", len(content), p)
         return {"ok": True, "path": str(p), "bytes": len(content.encode("utf-8"))}
     except Exception as e:
         log.error("[write_file] Failed: %s", e)
