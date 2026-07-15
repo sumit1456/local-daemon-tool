@@ -3,18 +3,12 @@ from typing import Optional
 from pydantic import BaseModel
 
 from codeengine.core.edit_engine import (
-    preview_edit,
-    apply_edit,
     preview_smart_edit,
     apply_smart_edit,
     undo_edit,
 )
 from codeengine.core.ast_engine import parse_blocks_from_code
 from codeengine.models.edit_models import (
-    EditRequest,
-    EditPreview,
-    ApplyRequest,
-    ApplyResult,
     SmartEditPreview,
     SmartEditResult,
     UndoResult,
@@ -24,34 +18,15 @@ router = APIRouter(tags=["edit"])
 
 
 # ---------------------------------------------------------------------------
-# Legacy Endpoints (backward compatibility)
-# ---------------------------------------------------------------------------
-
-@router.post("/preview-edit", response_model=EditPreview)
-async def preview(req: EditRequest):
-    """Generate a unified diff preview for the proposed code edit (simple string replacement)."""
-    try:
-        return await preview_edit(req)
-    except (FileNotFoundError, ValueError) as e:
-        raise HTTPException(status_code=400, detail=str(e))
-
-
-@router.post("/apply-edit", response_model=ApplyResult)
-async def apply(req: ApplyRequest):
-    """Apply a pending preview edit to disk and commit to git."""
-    try:
-        return await apply_edit(req.edit_id)
-    except (FileNotFoundError, ValueError) as e:
-        raise HTTPException(status_code=400, detail=str(e))
-
-
-# ---------------------------------------------------------------------------
-# New Endpoints (smart block-based editing)
+# Smart Endpoints (block-based editing)
 # ---------------------------------------------------------------------------
 
 class SmartEditRequest(BaseModel):
     file: str
+    old_code: str
     new_code: str
+    mode: str = "fuzzy"  # "fuzzy" or "ast"
+    replace_all: bool = False  # fuzzy mode only: replace every match instead of erroring on ambiguity
 
 class ApplySmartRequest(BaseModel):
     edit_id: str
@@ -59,12 +34,16 @@ class ApplySmartRequest(BaseModel):
 @router.post("/preview-smart-edit", response_model=SmartEditPreview)
 async def preview_smart(req: SmartEditRequest):
     """
-    Generate a unified diff preview for smart block-based code editing.
-    Parses new_code into blocks (functions, classes, imports, constants)
-    and applies each onto the existing file intelligently.
+    Generate a unified diff preview for smart code editing.
+    mode="fuzzy" uses opencode-style string matching.
+    mode="ast" uses tree-sitter block parsing with class-aware matching.
+    replace_all=True (fuzzy mode only) replaces every occurrence of old_code
+    instead of raising on multiple matches.
     """
     try:
-        return await preview_smart_edit(req.file, req.new_code)
+        return await preview_smart_edit(
+            req.file, req.old_code, req.new_code, req.mode, replace_all=req.replace_all
+        )
     except (FileNotFoundError, ValueError) as e:
         raise HTTPException(status_code=400, detail=str(e))
 
