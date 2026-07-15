@@ -1362,6 +1362,7 @@ async def preview_smart_edit(
     old_code: str,
     new_code: str,
     mode: str = "fuzzy",
+    replace_all: bool = False,
 ) -> SmartEditPreview:
     """
     Preview a smart code edit as a unified diff WITHOUT writing to disk.
@@ -1374,17 +1375,20 @@ async def preview_smart_edit(
                 where you want import merging and block-level replacement.
 
     Args:
-        file:     Relative path to the file inside REPO_PATH.
-        old_code: The text to find and replace.
-        new_code: The replacement text.
-        mode:     "fuzzy" (default) or "ast".
+        file:        Relative path to the file inside REPO_PATH.
+        old_code:    The text to find and replace.
+        new_code:    The replacement text.
+        mode:        "fuzzy" (default) or "ast".
+        replace_all: If True (fuzzy mode only), replace every occurrence of
+                     old_code instead of erroring out on multiple matches.
+                     Default False (safer, ambiguity-checked single replace).
 
     Returns:
         SmartEditPreview with diff, lines_changed, and (for ast mode) block results.
     """
     if mode == "ast":
         return await preview_smart_edit_ast(file, old_code, new_code)
-    return await _preview_smart_edit_fuzzy(file, old_code, new_code)
+    return await _preview_smart_edit_fuzzy(file, old_code, new_code, replace_all=replace_all)
 
 
 async def _preview_smart_edit_fuzzy(
