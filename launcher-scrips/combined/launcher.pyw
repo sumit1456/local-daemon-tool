@@ -129,6 +129,9 @@ HOST = "127.0.0.1"
 PORT = 8000
 URL  = f"http://{HOST}:{PORT}"
 
+# Whether uvicorn should run with --reload (dev mode). Set via env var.
+_RELOAD_ENABLED = os.environ.get("CE_RELOAD", "0") == "1"
+
 server_process = None
 mcp_process = None
 
