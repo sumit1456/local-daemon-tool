@@ -554,6 +554,7 @@ async def preview_smart_edit(
     old_code: str,
     new_code: str,
     mode: str = "fuzzy",
+    replace_all: bool = False,
 ) -> dict:
     """
     Preview a smart code edit as a unified diff WITHOUT writing to disk.
@@ -566,12 +567,16 @@ async def preview_smart_edit(
         new_code: The replacement text.
         mode: "fuzzy" (default, opencode-style string matching) or
                "ast" (tree-sitter block parsing with class-aware matching).
+        replace_all: If True (fuzzy mode only), replace every occurrence of
+                     old_code instead of erroring out on multiple matches.
+                     Default False (safer, ambiguity-checked single replace).
     """
     return await _post("/preview-smart-edit", {
-        "file":     file,
-        "old_code": old_code,
-        "new_code": new_code,
-        "mode":     mode,
+        "file":        file,
+        "old_code":    old_code,
+        "new_code":    new_code,
+        "mode":        mode,
+        "replace_all": replace_all,
     })
 
 
