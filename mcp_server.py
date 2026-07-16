@@ -1418,15 +1418,17 @@ async def build_tree(
 
 
 @mcp.tool()
-async def write_file(path: str, content: str) -> dict:
+async def write_file(path: str, content: str, append: bool = False) -> dict:
     """
     Write content to a file. Creates parent directories if needed.
-    Overwrites existing files entirely.
+    Overwrites existing files entirely, unless append=True.
     Only permitted within the currently indexed repo.
 
     Args:
         path: Absolute or relative path to the file to write.
         content: The full content to write to the file.
+        append: If True, append content to the end of the file instead of
+                overwriting it. Defaults to False.
     """
     repo = await _get_repo_path()
     repo_root = Path(repo).resolve()
@@ -1448,9 +1450,12 @@ async def write_file(path: str, content: str) -> dict:
 
     try:
         p.parent.mkdir(parents=True, exist_ok=True)
-        p.write_text(content, encoding="utf-8")
-        log.info("[write_file] Wrote %d bytes to %s", len(content), p)
-        return {"ok": True, "path": str(p), "bytes": len(content.encode("utf-8"))}
+        mode = "a" if append else "w"
+        with open(p, mode, encoding="utf-8") as f:
+            f.write(content)
+        action = "Appended" if append else "Wrote"
+        log.info("[write_file] %s %d bytes to %s", action, len(content), p)
+        return {"ok": True, "path": str(p), "bytes": len(content.encode("utf-8")), "append": append}
     except Exception as e:
         log.error("[write_file] Failed: %s", e)
         return {"ok": False, "error": str(e)}
